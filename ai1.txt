@@ -1,0 +1,407 @@
+requirements.txt
+
+Plaintext
+fastapi>=0.110.0
+uvicorn>=0.28.0
+PyJWT>=2.8.0
+bcrypt>=4.1.2
+pydantic>=2.6.0
+pydantic-settings>=2.1.0
+python-dotenv>=1.0.1
+.env.example
+
+Kod parchasi
+APP_SECRET=your-super-secret-jwt-key
+OWNER_EMAIL=xoja10122012@gmail.com
+ALLOWED_ORIGINS=https://your-app.vercel.app,http://localhost:8000
+DATABASE_URL=sqlite:///./aether.db
+vercel.json
+
+JSON
+{
+  "builds": [
+    {
+      "src": "api/index.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "frontend/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "api/index.py"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "frontend/$1"
+    }
+  ]
+}
+Security & Auth Modules
+
+app/security.py
+
+Python
+import os
+import time
+import jwt
+import bcrypt
+
+SECRET_KEY = os.getenv("APP_SECRET", "fallback-secret-key")
+ALGORITHM = "HS256"
+TOKEN_EXPIRY = 604800  # 7 days
+
+def hash_password(password: str) -> str:
+    pwd_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(pwd_bytes, salt).decode('utf-8')
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+
+def create_access_token(data: dict) -> str:
+    payload = data.copy()
+    payload.update({"exp": time.time() + TOKEN_EXPIRY})
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+def decode_access_token(token: str) -> dict | None:
+    try:
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except jwt.PyJWTError:
+        return None
+app/deps.py
+
+Python
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.security import decode_access_token
+from app.database import get_user_by_email
+
+security_scheme = HTTPBearer()
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)):
+    token = credentials.credentials
+    payload = decode_access_token(token)
+    if not payload or "sub" not in payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = get_user_by_email(payload["sub"])
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    return user
+Database Engine & Store
+
+app/db/engine.py
+
+Python
+import os
+import sqlite3
+
+DB_PATH = os.getenv("DATABASE_URL", "/tmp/aether.db" if os.getenv("VERCEL") else "aether.db").replace("sqlite:///", "")
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        is_admin INTEGER DEFAULT 0
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS conversations (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """)
+    conn.commit()
+    conn.close()
+app/db/sqlite_store.py
+
+Python
+from app.db.engine import get_db_connection
+
+def create_user(email: str, password_hash: str, is_admin: bool = False) -> int:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO users (email, password_hash, is_admin) VALUES (?, ?, ?)",
+        (email, password_hash, 1 if is_admin else 0)
+    )
+    conn.commit()
+    user_id = cursor.lastrowid
+    conn.close()
+    return user_id
+
+def get_user_by_email(email: str) -> dict | None:
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+    row = cursor.fetchone()
+    conn.close()
+    return dict(row) if row else None
+app/database.py
+
+Python
+from app.db.engine import init_db, get_db_connection
+from app.db.sqlite_store import create_user, get_user_by_email
+
+__all__ = ["init_db", "get_db_connection", "create_user", "get_user_by_email"]
+API Routers
+
+app/routers/auth.py
+
+Python
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel, EmailStr
+from app.security import hash_password, verify_password, create_access_token
+from app.database import create_user, get_user_by_email
+from app.deps import get_current_user
+
+router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+class AuthPayload(BaseModel):
+    email: EmailStr
+    password: str
+
+@router.post("/register")
+def register(payload: AuthPayload):
+    if get_user_by_email(payload.email):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    hashed = hash_password(payload.password)
+    user_id = create_user(payload.email, hashed)
+    token = create_access_token({"sub": payload.email, "id": user_id})
+    return {"access_token": token, "token_type": "bearer"}
+
+@router.post("/login")
+def login(payload: AuthPayload):
+    user = get_user_by_email(payload.email)
+    if not user or not verify_password(payload.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    token = create_access_token({"sub": user["email"], "id": user["id"]})
+    return {"access_token": token, "token_type": "bearer"}
+
+@router.get("/me")
+def me(user=Depends(get_current_user)):
+    return {"id": user["id"], "email": user["email"], "is_admin": bool(user["is_admin"])}
+app/routers/chat.py
+
+Python
+import asyncio
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from app.deps import get_current_user
+
+router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+class ChatPayload(BaseModel):
+    conversation_id: str
+    message: str
+
+@router.post("/stream")
+async def stream_chat(data: ChatPayload, user=Depends(get_current_user)):
+    async def sse_generator():
+        text = f"Aether response to: {data.message}"
+        for token in text.split():
+            yield f"data: {token} \n\n"
+            await asyncio.sleep(0.08)
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")
+app/routers/conversations.py
+
+Python
+import uuid
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from app.deps import get_current_user
+from app.database import get_db_connection
+
+router = APIRouter(prefix="/api/conversations", tags=["conversations"])
+
+class ConvCreate(BaseModel):
+    title: str
+
+@router.get("")
+def list_conversations(user=Depends(get_current_user)):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM conversations WHERE user_id = ? ORDER BY created_at DESC", (user["id"],))
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@router.post("")
+def create_conversation(data: ConvCreate, user=Depends(get_current_user)):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    conv_id = str(uuid.uuid4())
+    cursor.execute("INSERT INTO conversations (id, user_id, title) VALUES (?, ?, ?)",
+                   (conv_id, user["id"], data.title))
+    conn.commit()
+    conn.close()
+    return {"id": conv_id, "title": data.title}
+
+@router.delete("/{conv_id}")
+def delete_conversation(conv_id: str, user=Depends(get_current_user)):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM conversations WHERE id = ? AND user_id = ?", (conv_id, user["id"]))
+    conn.commit()
+    conn.close()
+    return {"status": "success"}
+app/routers/files.py
+
+Python
+import os
+from fastapi import APIRouter, UploadFile, File, Depends
+from app.deps import get_current_user
+
+router = APIRouter(prefix="/api/files", tags=["files"])
+
+@router.post("/upload")
+async def upload_file(file: UploadFile = File(...), user=Depends(get_current_user)):
+    upload_dir = "/tmp/uploads"
+    os.makedirs(upload_dir, exist_ok=True)
+    file_path = os.path.join(upload_dir, file.filename)
+    with open(file_path, "wb") as f:
+        f.write(await file.read())
+    return {"filename": file.filename, "status": "uploaded"}
+app/routers/health.py
+
+Python
+from fastapi import APIRouter
+
+router = APIRouter(prefix="/api/health", tags=["health"])
+
+@router.get("")
+def health_check():
+    return {"status": "ok"}
+app/routers/admin.py
+
+Python
+import os
+from fastapi import APIRouter, Depends, HTTPException
+from app.deps import get_current_user
+
+router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+@router.get("/info")
+def admin_info(user=Depends(get_current_user)):
+    owner_email = os.getenv("OWNER_EMAIL", "xoja10122012@gmail.com")
+    if user["email"] != owner_email and not user["is_admin"]:
+        raise HTTPException(status_code=403, detail="Admin access denied")
+    return {"owner": owner_email, "status": "authorized"}
+Application Entrypoints
+
+app/main.py
+
+Python
+import os
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.database import init_db
+from app.routers import auth, chat, conversations, files, health, admin
+
+init_db()
+
+app = FastAPI(title="Aether PWA API")
+
+origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(auth.router)
+app.include_router(chat.router)
+app.include_router(conversations.router)
+app.include_router(files.router)
+app.include_router(health.router)
+app.include_router(admin.router)
+run.py
+
+Python
+import uvicorn
+
+if __name__ == "__main__":
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+api/index.py
+
+Python
+from app.main import app
+Frontend PWA Essentials
+
+frontend/manifest.json
+
+JSON
+{
+  "name": "Aether App",
+  "short_name": "Aether",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "icons": [
+    {
+      "src": "/assets/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
+frontend/sw.js
+
+JavaScript
+const CACHE_NAME = 'aether-v1';
+const ASSETS = ['/', '/index.html', '/assets/app.css', '/manifest.json'];
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE_NAME).then((c) => c.addAll(ASSETS)));
+});
+
+self.addEventListener('fetch', (e) => {
+  e.respondWith(caches.match(e.request).then((r) => r || fetch(e.request)));
+});
+frontend/index.html
+
+HTML
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/assets/app.css">
+  <title>Aether PWA</title>
+</head>
+<body>
+  <div id="app"><h1>Aether Ready</h1></div>
+  <script>
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js');
+    }
+  </script>
+</body>
+</html>
+
+these should be all
