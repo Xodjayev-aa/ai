@@ -5,10 +5,7 @@ from app.database import get_user_by_email
 
 security_scheme = HTTPBearer()
 
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
-):
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)):
     token = credentials.credentials
     payload = decode_access_token(token)
     if not payload or "sub" not in payload:
