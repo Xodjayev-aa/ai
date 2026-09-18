@@ -54,19 +54,28 @@ class AuthPayload(BaseModel):
     password: str
 
 
-def _set_session_cookie(response: Response, token: str) -> None:
+def _set_session_cookie(request: Request, response: Response, token: str) -> None:
+    """Adaptive cookie policy:
+    - HTTPS (Vercel, iframe preview proxies): SameSite=None + Secure so the
+      cookie also works when the app is embedded in a cross-site iframe.
+    - Plain HTTP localhost: SameSite=Lax (Secure cookies are rejected there).
+    Both contexts are first-party on Vercel, so this covers every deployment.
+    """
+    forwarded = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    is_https = request.url.scheme == "https" or forwarded == "https"
     response.set_cookie(
         key=SESSION_COOKIE,
         value=token,
         max_age=TOKEN_MAX_AGE,
         httponly=True,
-        samesite="lax",
+        samesite="none" if is_https else "lax",
+        secure=is_https,
         path="/",
     )
 
 
 @router.post("/register")
-def register(payload: AuthPayload, response: Response):
+def register(payload: AuthPayload, request: Request, response: Response):
     email = payload.email.lower()
     if get_user_by_email(email):
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -76,7 +85,7 @@ def register(payload: AuthPayload, response: Response):
     hashed = hash_password(payload.password)
     user_id = create_user(email, hashed, is_admin=is_admin)
     token = create_access_token({"sub": email, "id": user_id})
-    _set_session_cookie(response, token)
+    _set_session_cookie(request, response, token)
     return {"access_token": token, "token_type": "bearer", "is_admin": is_admin}
 
 
@@ -94,7 +103,7 @@ def login(payload: AuthPayload, request: Request, response: Response):
         _record_failure(identity)
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_access_token({"sub": user["email"], "id": user["id"]})
-    _set_session_cookie(response, token)
+    _set_session_cookie(request, response, token)
     return {"access_token": token, "token_type": "bearer",
             "is_admin": bool(user["is_admin"])}
 
