@@ -535,6 +535,26 @@ $("#deck-pptx").onclick = async () => {
   finally { btn.textContent = "⬇ Export .pptx"; }
 };
 
+$("#deck-html").onclick = async () => {
+  if (!currentDeck) return;
+  const btn = $("#deck-html");
+  btn.textContent = "⏳ Building…";
+  try {
+    const resp = await fetch("/api/presentations/html", {
+      method: "POST", headers: API.headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ outline: currentDeck, theme: $("#deck-theme").value }),
+    });
+    if (!resp.ok) throw new Error("HTML export failed");
+    const blob = await resp.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = (currentDeck.title || "presentation").replace(/[^\w\- ]+/g, "").trim() + "-deck.html";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  } catch (err) { alert(err.message); }
+  finally { btn.textContent = "🌐 HTML deck"; }
+};
+
 /* ─────────────── misc UI ─────────────── */
 function showPane(name) {
   $("#chat-pane").classList.toggle("hidden", name !== "chat");
