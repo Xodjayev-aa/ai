@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, EmailStr
 
 from app.ai.config import MAX_PASSWORD_BYTES
-from app.database import create_user, get_user_by_email
+from app.database import create_user, get_user_by_email, update_password
 from app.deps import SESSION_COOKIE, get_current_user
 from app.security import create_access_token, hash_password, verify_password
 
@@ -97,6 +97,24 @@ def login(payload: AuthPayload, request: Request, response: Response):
     _set_session_cookie(response, token)
     return {"access_token": token, "token_type": "bearer",
             "is_admin": bool(user["is_admin"])}
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+@router.post("/password")
+def change_password(body: PasswordChange,
+                    user=Depends(get_current_user)):
+    """Change password for the logged-in user (requires current password)."""
+    if not verify_password(body.current_password, user["password_hash"]):
+        raise HTTPException(status_code=401,
+                            detail="Current password is incorrect.")
+    _validate_password(body.new_password)
+    update_password(user["id"], hash_password(body.new_password))
+    return {"status": "success",
+            "message": "Password updated. Use it next time you sign in."}
 
 
 @router.post("/logout")

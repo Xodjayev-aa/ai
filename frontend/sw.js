@@ -1,5 +1,5 @@
 /* Aether service worker — cache static shell, never cache the API. */
-const CACHE = "aether-v5";
+const CACHE = "aether-v6";
 const SHELL = ["/", "/index.html", "/assets/app.css", "/assets/app.js",
   "/manifest.json", "/icons/icon-192.png", "/icons/icon-512.png"];
 

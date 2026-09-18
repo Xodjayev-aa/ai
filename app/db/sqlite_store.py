@@ -54,6 +54,11 @@ def set_admin(user_id: int, is_admin: bool) -> None:
             (1 if is_admin else 0, user_id))
 
 
+def update_password(user_id: int, password_hash: str) -> None:
+    execute("UPDATE users SET password_hash = ? WHERE id = ?",
+            (password_hash, user_id))
+
+
 def delete_user(user_id: int) -> int:
     execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
     execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))

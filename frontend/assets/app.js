@@ -555,6 +555,40 @@ $("#deck-html").onclick = async () => {
   finally { btn.textContent = "🌐 HTML deck"; }
 };
 
+
+/* ─────────────── change password ─────────────── */
+$("#password-btn").onclick = () => {
+  $("#pw-error").classList.add("hidden");
+  $("#password-form").reset();
+  $("#password-modal").classList.remove("hidden");
+};
+$("#password-close").onclick = () => $("#password-modal").classList.add("hidden");
+$("#password-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const err = $("#pw-error");
+  err.classList.add("hidden");
+  const cur = $("#pw-current").value, nw = $("#pw-new").value, cf = $("#pw-confirm").value;
+  if (nw !== cf) {
+    err.textContent = "New passwords do not match.";
+    err.classList.remove("hidden");
+    return;
+  }
+  try {
+    const resp = await fetch("/api/auth/password", {
+      method: "POST",
+      headers: API.headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ current_password: cur, new_password: nw }),
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.detail || "Could not update password");
+    $("#password-modal").classList.add("hidden");
+    alert("✅ Password updated.");
+  } catch (ex) {
+    err.textContent = ex.message;
+    err.classList.remove("hidden");
+  }
+};
+
 /* ─────────────── misc UI ─────────────── */
 function showPane(name) {
   $("#chat-pane").classList.toggle("hidden", name !== "chat");

@@ -49,6 +49,7 @@
         <nav id="conv-list" class="conv-list" aria-label="Conversations"></nav>
         <div class="sidebar-foot">
           <span id="user-email" class="muted small-text"></span>
+          <button id="password-btn" class="btn ghost small-btn">🔑 Change password</button>
           <button id="logout-btn" class="btn ghost small-btn">Sign out</button>
         </div>
       </aside>
@@ -158,6 +159,22 @@
         <span id="slide-counter" class="muted"></span>
         <button id="slide-next" class="btn ghost">→</button>
       </div>
+    </div>
+  </div>
+
+
+  <!-- ════════════════ PASSWORD MODAL ════════════════ -->
+  <div id="password-modal" class="modal hidden">
+    <div class="modal-inner" style="width:min(400px,100%)">
+      <div class="modal-bar"><strong>🔑 Change password</strong>
+        <button id="password-close" class="icon-btn" aria-label="Close">✕</button></div>
+      <form id="password-form" style="display:flex;flex-direction:column;gap:12px;padding:18px">
+        <input type="password" id="pw-current" placeholder="Current password" required autocomplete="current-password">
+        <input type="password" id="pw-new" placeholder="New password (min 6 chars)" required minlength="6" autocomplete="new-password">
+        <input type="password" id="pw-confirm" placeholder="Repeat new password" required minlength="6" autocomplete="new-password">
+        <p id="pw-error" class="auth-error hidden"></p>
+        <button type="submit" class="btn primary wide">Update password</button>
+      </form>
     </div>
   </div>
 
