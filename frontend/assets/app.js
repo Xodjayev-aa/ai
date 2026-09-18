@@ -152,9 +152,35 @@ async function loadConversations() {
   conversations.forEach((c) => {
     const div = document.createElement("div");
     div.className = "conv-item" + (c.id === currentConv ? " active" : "");
-    div.innerHTML = `<span class="title"></span><button class="del" title="Delete">🗑</button>`;
-    div.querySelector(".title").textContent = c.title;
-    div.onclick = (e) => { if (!e.target.classList.contains("del")) openConversation(c.id); };
+    div.innerHTML = `<span class="title"></span><span class="acts">
+      <button class="pin" title="Pin">${c.pinned ? "📌" : "📍"}</button>
+      <button class="fold" title="Folder">📁</button>
+      <button class="share" title="Share read-only link">🔗</button>
+      <button class="exp" title="Export .md">⬇</button>
+      <button class="del" title="Delete">🗑</button></span>`;
+    div.querySelector(".title").textContent = (c.pinned ? "📌 " : "") + c.title +
+      (c.folder ? `  · ${c.folder}` : "");
+    div.onclick = (e) => { if (!e.target.classList.contains("del") && !e.target.classList.contains("acts")) openConversation(c.id); };
+    div.querySelector(".pin").onclick = (e) => { e.stopPropagation();
+      fetch(`/api/conversations/${c.id}`, { method: "PATCH",
+        headers: API.headers({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ pinned: !c.pinned }) }).then(loadConversations); };
+    div.querySelector(".fold").onclick = async (e) => { e.stopPropagation();
+      const f = prompt("Folder name (empty = General):", c.folder || "");
+      if (f === null) return;
+      await fetch(`/api/conversations/${c.id}`, { method: "PATCH",
+        headers: API.headers({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ folder: f }) });
+      loadConversations(); };
+    div.querySelector(".share").onclick = async (e) => { e.stopPropagation();
+      const r = await fetch(`/api/conversations/${c.id}/share`, { method: "POST", headers: API.headers() });
+      const d = await r.json();
+      if (!r.ok) return alert(d.detail || "Could not share");
+      const url = location.origin + d.path;
+      try { await navigator.clipboard.writeText(url); alert("🔗 Read-only link copied!\n" + url); }
+      catch { prompt("Share this link:", url); } };
+    div.querySelector(".exp").onclick = (e) => { e.stopPropagation();
+      window.open(`/api/conversations/${c.id}/export?fmt=md`, "_blank"); };
     div.querySelector(".del").onclick = async () => {
       if (!confirm("Delete this conversation?")) return;
       await fetch(`/api/conversations/${c.id}`, { method: "DELETE", headers: API.headers() });
@@ -166,6 +192,30 @@ async function loadConversations() {
 }
 
 $("#new-chat").onclick = () => { newChat(); closeSidebar(); };
+
+let searchTimer = null;
+$("#chat-search").addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  const q = e.target.value.trim();
+  const box = $("#search-results");
+  if (q.length < 2) { box.classList.add("hidden"); return; }
+  searchTimer = setTimeout(async () => {
+    const resp = await fetch(`/api/chats/search?q=${encodeURIComponent(q)}`,
+      { headers: API.headers() });
+    if (!resp.ok) { box.classList.add("hidden"); return; }
+    const hits = await resp.json();
+    box.innerHTML = hits.length
+      ? hits.map((h) => `<div class="search-hit" data-conv="${h.conversation_id}">
+          <b>${escapeHtml(h.title)}</b>
+          <span class="muted small-text">${escapeHtml(h.content.slice(0, 90))}…</span></div>`).join("")
+      : '<div class="muted small-text" style="padding:8px">No matches.</div>';
+    box.classList.remove("hidden");
+    box.querySelectorAll(".search-hit").forEach((el) => {
+      el.onclick = () => { box.classList.add("hidden"); $("#chat-search").value = "";
+        openConversation(el.dataset.conv); closeSidebar(); };
+    });
+  }, 300);
+});
 function newChat() {
   currentConv = null;
   $("#messages").innerHTML = `<div class="hero"><h2>What can I help with?</h2>
@@ -246,6 +296,7 @@ async function sendMessage() {
   $("#send-btn").disabled = true;
   input.value = "";
   autoGrow(input);
+  attachedDoc = null; attachedImage = null; renderChips();
 
   appendMessage("user", text);
   const { wrap, contentEl } = appendMessage("assistant", "", {}, true);
@@ -270,6 +321,10 @@ async function sendMessage() {
         message: text,
         force_polish: $("#force-polish").checked,
         mode: answerMode,
+        reasoning: $("#reasoning-toggle").checked,
+        persona_id: $("#persona-select").value || null,
+        doc_id: attachedDoc ? attachedDoc.doc_id : null,
+        image_b64: attachedImage,
       }),
     });
     if (resp.status === 429) {
@@ -589,6 +644,156 @@ $("#password-form").onsubmit = async (e) => {
   }
 };
 
+/* ─────────────── settings pane ─────────────── */
+$("#nav-settings").onclick = () => { showPane("settings"); loadSettings(); closeSidebar(); };
+async function loadSettings() {
+  try {
+    const [ins, mem, per] = await Promise.all([
+      fetch("/api/settings/instructions", { headers: API.headers() }).then(r => r.json()),
+      fetch("/api/settings/memory", { headers: API.headers() }).then(r => r.json()),
+      fetch("/api/settings/personas", { headers: API.headers() }).then(r => r.json()),
+    ]);
+    $("#instructions").value = ins.text || "";
+    $("#auto-memory").checked = !!mem.auto;
+    $("#memory-list").innerHTML = (mem.memories || []).map((m) =>
+      `<div class="mem-row"><span>${escapeHtml(m.content)}</span>
+       <button data-id="${m.id}" class="mem-del">✕</button></div>`).join("")
+      || '<p class="muted small-text">No memories yet — chat and they will appear.</p>';
+    $("#memory-list").querySelectorAll(".mem-del").forEach((b) => {
+      b.onclick = () => fetch("/api/settings/memory/" + b.dataset.id,
+        { method: "DELETE", headers: API.headers() }).then(loadSettings);
+    });
+    renderPersonas(per || []);
+  } catch {}
+}
+function renderPersonas(list) {
+  $("#persona-list").innerHTML = list.map((p) =>
+    `<div class="mem-row"><span><b>${escapeHtml(p.name)}</b> — <span class="muted">${escapeHtml(p.prompt.slice(0, 80))}…</span></span>
+     <button data-id="${p.id}" class="per-del">✕</button></div>`).join("")
+    || '<p class="muted small-text">No personas yet.</p>';
+  $("#persona-list").querySelectorAll(".per-del").forEach((b) => {
+    b.onclick = () => fetch("/api/settings/personas/" + b.dataset.id,
+      { method: "DELETE", headers: API.headers() }).then(loadSettings);
+  });
+  const sel = $("#persona-select");
+  sel.innerHTML = '<option value="">🎭 Persona</option>' +
+    list.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("");
+}
+$("#instructions-save").onclick = async () => {
+  const r = await fetch("/api/settings/instructions", { method: "PUT",
+    headers: API.headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ text: $("#instructions").value }) });
+  alert(r.ok ? "✅ Saved." : "Could not save.");
+};
+$("#auto-memory").onchange = async (e) => {
+  await fetch("/api/settings/memory/auto", { method: "PUT",
+    headers: API.headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ enabled: e.target.checked }) });
+};
+$("#persona-add").onclick = async () => {
+  const name = $("#persona-name").value.trim(), prompt = $("#persona-prompt").value.trim();
+  if (!name || !prompt) return alert("Name and prompt are required.");
+  const r = await fetch("/api/settings/personas", { method: "POST",
+    headers: API.headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ name, prompt }) });
+  if (!r.ok) return alert((await r.json().catch(() => ({}))).detail || "Failed");
+  $("#persona-name").value = ""; $("#persona-prompt").value = "";
+  loadSettings();
+};
+$("#export-all").onclick = () => window.open("/api/settings/export", "_blank");
+
+/* ─────────────── news pane ─────────────── */
+$("#nav-news").onclick = () => { showPane("news"); closeSidebar(); };
+$("#news-go").onclick = async () => {
+  const box = $("#news-results");
+  box.innerHTML = '<p class="muted" style="padding:0 18px">Loading…</p>';
+  try {
+    const q = $("#news-topic").value.trim();
+    const resp = await fetch("/api/news" + (q ? `?q=${encodeURIComponent(q)}` : ""),
+      { headers: API.headers() });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "Failed");
+    box.innerHTML = data.items.map((n) =>
+      `<div class="news-item"><a href="${escapeHtml(n.link)}" target="_blank" rel="noopener">
+       ${escapeHtml(n.title)}</a><span class="muted small-text">${escapeHtml(n.source)} · ${escapeHtml(n.published)}</span></div>`).join("")
+      || '<p class="muted" style="padding:0 18px">No items.</p>';
+  } catch (err) {
+    box.innerHTML = `<p class="muted" style="padding:0 18px">⚠️ ${escapeHtml(err.message)}</p>`;
+  }
+};
+
+/* ─────────────── tasks pane ─────────────── */
+$("#nav-tasks").onclick = () => { showPane("tasks"); loadTasks(); closeSidebar(); };
+const hourSel = $("#task-hour");
+for (let h = 0; h < 24; h++) {
+  const o = document.createElement("option");
+  o.value = h; o.textContent = `⏰ ${String(h).padStart(2, "0")}:00 UTC`;
+  hourSel.appendChild(o);
+}
+hourSel.value = 6;
+async function loadTasks() {
+  const resp = await fetch("/api/tasks", { headers: API.headers() });
+  const tasks = await resp.json().catch(() => []);
+  $("#task-list").innerHTML = tasks.map((t) =>
+    `<div class="mem-row"><span><b>${escapeHtml(t.prompt.slice(0, 60))}</b>
+     <br><span class="muted small-text">daily at ${String(t.hour_utc).padStart(2, "0")}:00 UTC · ${t.last_run ? "last run " + t.last_run : "not run yet"}</span></span>
+     <button data-id="${t.id}" class="task-del">✕</button></div>`).join("")
+    || '<p class="muted small-text">No tasks yet.</p>';
+  $("#task-list").querySelectorAll(".task-del").forEach((b) => {
+    b.onclick = () => fetch("/api/tasks/" + b.dataset.id,
+      { method: "DELETE", headers: API.headers() }).then(loadTasks);
+  });
+}
+$("#task-add").onclick = async () => {
+  const prompt = $("#task-prompt").value.trim();
+  if (!prompt) return;
+  const r = await fetch("/api/tasks", { method: "POST",
+    headers: API.headers({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ prompt, hour_utc: Number(hourSel.value) }) });
+  if (!r.ok) return alert((await r.json().catch(() => ({}))).detail || "Failed");
+  $("#task-prompt").value = "";
+  loadTasks();
+};
+
+/* ─────────────── attachments: PDF + image ─────────────── */
+let attachedDoc = null;   // {doc_id, name}
+let attachedImage = null; // dataURL
+function renderChips() {
+  const box = $("#attachments");
+  const chips = [];
+  if (attachedDoc) chips.push(`<span class="chip">📎 ${escapeHtml(attachedDoc.name)} <button data-k="doc">✕</button></span>`);
+  if (attachedImage) chips.push(`<span class="chip">📷 image <button data-k="img">✕</button></span>`);
+  box.innerHTML = chips.join("");
+  box.classList.toggle("hidden", !chips.length);
+  box.querySelector('[data-k="doc"]')?.addEventListener("click", () => { attachedDoc = null; renderChips(); });
+  box.querySelector('[data-k="img"]')?.addEventListener("click", () => { attachedImage = null; renderChips(); });
+}
+$("#attach-btn").onclick = () => $("#pdf-input").click();
+$("#image-attach-btn").onclick = () => $("#image-input").click();
+$("#pdf-input").onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const form = new FormData();
+  form.append("file", f);
+  const r = await fetch("/api/files/extract-pdf", { method: "POST", headers: API.headers(), body: form });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) return alert(d.detail || "Could not read PDF");
+  attachedDoc = { doc_id: d.doc_id, name: d.name };
+  renderChips();
+  e.target.value = "";
+};
+$("#image-input").onchange = (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (f.size > 4 * 1024 * 1024) return alert("Image too large (max 4 MB)");
+  const reader = new FileReader();
+  reader.onload = () => { attachedImage = reader.result; renderChips(); };
+  reader.readAsDataURL(f);
+  e.target.value = "";
+};
+
+/* ─────────────── reasoning toggle ─────────────── */
+
 /* ─────────────── misc UI ─────────────── */
 function showPane(name) {
   $("#chat-pane").classList.toggle("hidden", name !== "chat");
@@ -596,6 +801,12 @@ function showPane(name) {
   $("#slides-pane").classList.toggle("hidden", name !== "slides");
   const admin = $("#admin-pane");
   if (admin) admin.classList.toggle("hidden", name !== "admin");
+  for (const [id, key] of [["settings-pane", "settings"], ["news-pane", "news"],
+                           ["tasks-pane", "tasks"]]) {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle("hidden", name !== key);
+  }
+  if (name === "chat") { $("#chat-pane").classList.remove("hidden"); }
 }
 function closeSidebar() {
   $("#sidebar").classList.remove("open");

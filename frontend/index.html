@@ -43,9 +43,14 @@
     <div class="layout">
       <aside id="sidebar" class="sidebar">
         <button id="new-chat" class="btn primary wide">＋ New chat</button>
+        <input id="chat-search" type="search" placeholder="🔍 Search chats…" autocomplete="off">
+        <div id="search-results" class="search-results hidden"></div>
         <button id="nav-images" class="btn ghost wide">🖼️ Images</button>
         <button id="nav-slides" class="btn ghost wide">📊 Presentations</button>
         <button id="nav-admin" class="btn ghost wide hidden">🛠️ Admin</button>
+        <button id="nav-settings" class="btn ghost wide">⚙️ Settings</button>
+        <button id="nav-news" class="btn ghost wide">📰 News</button>
+        <button id="nav-tasks" class="btn ghost wide">⏰ Scheduled</button>
         <nav id="conv-list" class="conv-list" aria-label="Conversations"></nav>
         <div class="sidebar-foot">
           <span id="user-email" class="muted small-text"></span>
@@ -66,14 +71,25 @@
           </div>
           <div class="composer">
             <div id="phase-bar" class="phase-bar hidden"></div>
+            <div id="attachments" class="attachments hidden"></div>
             <div class="composer-row">
+              <button id="attach-btn" class="icon-btn" title="Attach PDF">📎</button>
+              <button id="image-attach-btn" class="icon-btn" title="Attach image">📷</button>
               <button id="mic-btn" class="icon-btn big" title="Voice input">🎤</button>
               <textarea id="chat-input" rows="1" placeholder="Message Aether…" maxlength="8000"></textarea>
               <button id="send-btn" class="send-btn" title="Send">➤</button>
             </div>
+            <input type="file" id="pdf-input" accept=".pdf" class="hidden">
+            <input type="file" id="image-input" accept="image/png,image/jpeg,image/webp" class="hidden">
             <label class="deep-toggle" title="Always run the second AI polish pass (uses more quota)">
               <input type="checkbox" id="force-polish"> <span>✨ Deep answer</span>
             </label>
+            <div class="composer-toggles">
+              <label class="deep-toggle" title="Step-by-step careful reasoning (slower, better for math/logic)">
+                <input type="checkbox" id="reasoning-toggle"> <span>🧠 Reason</span>
+              </label>
+              <select id="persona-select" title="Persona" class="persona-select"><option value="">🎭 Persona</option></select>
+            </div>
             <div class="mode-switch" role="tablist">
               <button id="mode-ai" class="mode-btn active" title="AI-generated answer">⚡ AI mode</button>
               <button id="mode-research" class="mode-btn" title="Real info from Wikipedia & DuckDuckGo — no AI, with sources">📚 Research mode</button>
@@ -132,6 +148,56 @@
                 <div id="admin-ai" class="admin-ai"></div>
               </div>
             </div>
+          </div>
+        </section>
+
+        <!-- SETTINGS -->
+        <section id="settings-pane" class="pane hidden">
+          <div class="tool-head"><h2>⚙️ Settings</h2><p class="muted">Personalize how Aether answers you</p></div>
+          <div class="tool-form settings-form">
+            <label class="sett-label" for="instructions">📝 Custom instructions <span class="muted small-text">(always applied to every answer)</span></label>
+            <textarea id="instructions" rows="3" maxlength="2000" placeholder="e.g. I'm a 10th-grade student. Explain simply, use examples, keep answers under 300 words."></textarea>
+            <button id="instructions-save" class="btn primary">Save instructions</button>
+            <hr class="sett-hr">
+            <label class="deep-toggle" style="justify-content:flex-start">
+              <input type="checkbox" id="auto-memory"> <span>🧠 Long-term memory — remember facts about me across chats</span>
+            </label>
+            <div id="memory-list" class="memory-list"></div>
+            <hr class="sett-hr">
+            <label class="sett-label">🎭 Personas <span class="muted small-text">(custom AI characters)</span></label>
+            <div class="form-row">
+              <input id="persona-name" type="text" placeholder="Name (e.g. Math Tutor)" maxlength="60">
+            </div>
+            <textarea id="persona-prompt" rows="2" maxlength="2000" placeholder="How should it behave? e.g. You are a patient math tutor. Always show step-by-step solutions."></textarea>
+            <button id="persona-add" class="btn primary">Add persona</button>
+            <div id="persona-list" class="memory-list"></div>
+            <hr class="sett-hr">
+            <button id="export-all" class="btn ghost">⬇ Export all my data (.json)</button>
+          </div>
+        </section>
+
+        <!-- NEWS -->
+        <section id="news-pane" class="pane hidden">
+          <div class="tool-head"><h2>📰 News</h2><p class="muted">Live headlines via Google News — free, no AI</p></div>
+          <div class="tool-form">
+            <div class="form-row">
+              <input id="news-topic" type="text" placeholder="Topic (leave empty for top stories)" maxlength="120">
+              <button id="news-go" class="btn primary">Fetch</button>
+            </div>
+          </div>
+          <div id="news-results" class="news-results"><p class="muted" style="padding:0 18px">Load headlines above.</p></div>
+        </section>
+
+        <!-- TASKS -->
+        <section id="tasks-pane" class="pane hidden">
+          <div class="tool-head"><h2>⏰ Scheduled tasks</h2><p class="muted">A prompt that runs every day at a set hour — the answer lands in a chat</p></div>
+          <div class="tool-form">
+            <textarea id="task-prompt" rows="2" maxlength="500" placeholder="e.g. Give me a 5-line summary of today's AI news"></textarea>
+            <div class="form-row">
+              <select id="task-hour" title="Hour (UTC)"></select>
+              <button id="task-add" class="btn primary">Schedule daily</button>
+            </div>
+            <div id="task-list" class="memory-list"></div>
           </div>
         </section>
       </main>

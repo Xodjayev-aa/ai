@@ -70,6 +70,12 @@ Then **Deployments → ⋯ → Redeploy**. Open your site, register with your
 - If you hit the ceiling: raising `DAILY_REQUEST_LIMIT` won't create quota —
   the real fix is adding more keys (they all stack) or enabling paid tiers.
 
+## Optional extra env vars
+
+| Name | What it does |
+|---|---|
+| `CRON_SECRET` | Protects the daily scheduled-tasks endpoint (`/api/cron/daily`). Vercel automatically sends it as a Bearer header on cron calls. |
+
 ## Verify the deployment
 
 - `https://your-project.vercel.app/api/health` → `{"status":"ok"}`

@@ -23,17 +23,23 @@ app.add_middleware(
 )
 
 from app.routers import admin, auth, chat, conversations, files, health, \
-    images, presentations, research, voice  # noqa: E402
+    images, news, presentations, research, settings, share, tasks, voice  # noqa: E402
 
 app.include_router(auth.router)
 app.include_router(chat.router)
 app.include_router(conversations.router)
+app.include_router(conversations.search_router)
 app.include_router(files.router)
 app.include_router(health.router)
 app.include_router(admin.router)
 app.include_router(images.router)
 app.include_router(presentations.router)
 app.include_router(research.router)
+app.include_router(settings.router)
+app.include_router(share.router)
+app.include_router(news.router)
+app.include_router(tasks.router)
+app.include_router(tasks.cron_router)
 app.include_router(voice.router)
 
 # Serve the PWA directly from the API for local dev (python run.py).

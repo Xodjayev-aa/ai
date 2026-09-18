@@ -249,8 +249,68 @@ SCHEMA = [
         PRIMARY KEY (day, user_id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS memories (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_memories_user ON memories (user_id, created_at)",
+    """
+    CREATE TABLE IF NOT EXISTS personas (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS shared_chats (
+        token TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS docs (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        text TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS tasks (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        conversation_id TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        hour_utc INTEGER DEFAULT 6,
+        last_run TEXT,
+        active INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
 ]
+
+
+def _safe_alter(sql: str) -> None:
+    """Add a column, ignoring 'duplicate column' errors. Works on both
+    SQLite and Turso (PRAGMA introspection is unreliable over HTTP)."""
+    try:
+        execute(sql, ())
+    except Exception:
+        pass
 
 
 def init_db() -> None:
     execute_many([(s, ()) for s in SCHEMA])
+    # -- lightweight migrations (idempotent) --
+    _safe_alter("ALTER TABLE users ADD COLUMN custom_instructions TEXT DEFAULT ''")
+    _safe_alter("ALTER TABLE users ADD COLUMN auto_memory INTEGER DEFAULT 1")
+    _safe_alter("ALTER TABLE conversations ADD COLUMN folder TEXT DEFAULT ''")
+    _safe_alter("ALTER TABLE conversations ADD COLUMN pinned INTEGER DEFAULT 0")

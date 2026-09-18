@@ -16,10 +16,10 @@ Big names checked: **ChatGPT, Google Gemini, Claude, Perplexity, Grok, Copilot, 
 | New / delete conversations | Start fresh, remove junk | All | ✅ |
 | Rename conversations | Custom titles | ChatGPT, Claude | ✅ (auto-titled; manual rename exists in API) |
 | Multi-user accounts | Login, your data separate from others | All | ✅ |
-| Search inside your chats | Find "that thing I asked in March" | ChatGPT, Gemini | ❌ (easy: SQL `LIKE` search — free, ~1h) |
-| Pin/favorite chats | Keep important chats on top | ChatGPT | ❌ (easy — add a `pinned` column) |
-| Folders/projects | Group chats by topic | ChatGPT Projects, Claude | ❌ (medium) |
-| Export your data | Download all your chats | ChatGPT | ❌ (easy — JSON download button) |
+| Search inside your chats | Find "that thing I asked in March" | ChatGPT, Gemini | ✅ live search box |
+| Pin/favorite chats | Keep important chats on top | ChatGPT | ✅ pin + folders |
+| Folders/projects | Group chats by topic | ChatGPT Projects, Claude | ✅ folder grouping |
+| Export your data | Download all your chats | ChatGPT | ✅ per-chat .md/.json + full export |
 
 ## 2. Better answers (quality tricks)
 
@@ -27,7 +27,7 @@ Big names checked: **ChatGPT, Google Gemini, Claude, Perplexity, Grok, Copilot, 
 |---|---|---|---|
 | Two-AI polish | One AI writes, another improves | *(our special idea)* | ✅ smart "Deep answer" |
 | Multiple AI providers + failover | If one AI is down/rate-limited, another answers | *(big AIs don't even do this)* | ✅ Gemini→Cerebras→Groq→keyless |
-| Reasoning / "thinking" mode | AI thinks step-by-step before answering hard stuff | ChatGPT o-series, Gemini, DeepSeek | ❌ (medium: route hard questions to a reasoning model) |
+| Reasoning / "thinking" mode | AI thinks step-by-step before answering hard stuff | ChatGPT o-series, Gemini, DeepSeek | ✅ 🧠 Reason toggle (deep reasoning directive) |
 | Custom instructions | "Always answer like a teacher" | ChatGPT, Claude | ❌ (easy: one settings field added to the system prompt) |
 | Answer style picker | Short / detailed / simple-language toggle | Gemini | ❌ (easy) |
 | Multilingual answers | Replies in the language you type | All | ✅ (automatic) |
@@ -38,8 +38,8 @@ Big names checked: **ChatGPT, Google Gemini, Claude, Perplexity, Grok, Copilot, 
 |---|---|---|---|
 | Web search with citations | Answers with links to sources | Perplexity, ChatGPT, Gemini, Grok | ✅ 📚 Research mode (Wikipedia+DDG, **no AI, no key**) |
 | Keyless operation | Works without any API key at all | *(nobody else does this)* | ✅ |
-| Fresh news | Today's headlines | Grok (X), Perplexity | ❌ (medium: RSS feeds are free & keyless — could add) |
-| Upload a PDF and ask about it | "Summarize this homework" | ChatGPT, Claude, NotebookLM | ❌ (medium: text-extract then send to AI; PDF lib needed) |
+| Fresh news | Today's headlines | Grok (X), Perplexity | ✅ 📰 pane (Google News RSS, keyless) |
+| Upload a PDF and ask about it | "Summarize this homework" | ChatGPT, Claude, NotebookLM | ✅ 📎 attach PDF → ask about it |
 
 ## 4. Seeing & hearing
 
@@ -48,9 +48,9 @@ Big names checked: **ChatGPT, Google Gemini, Claude, Perplexity, Grok, Copilot, 
 | Voice input (talk to it) | Speak, it types | All | ✅ Whisper → Gemini → browser, 3 layers |
 | Voice output (it talks) | Reads answers aloud | ChatGPT (best), Gemini Live | ✅ 3 layers incl. browser voice |
 | Real-time voice conversation | Live back-and-forth talking like a phone call | ChatGPT Advanced Voice, Gemini Live | ❌ (hard free; needs streaming audio) |
-| Understand images you upload | "What's in this photo?" | ChatGPT, Gemini, Claude | ❌ (medium: Gemini vision is free-tier; needs upload+vision wiring) |
+| Understand images you upload | "What's in this photo?" | ChatGPT, Gemini, Claude | ✅ 📷 attach image (Gemini vision when key set) |
 | Understand video | Ask about a video | Gemini | ❌ (not realistic free) |
-| Read web pages by link | "Summarize this URL" | ChatGPT, Perplexity | ❌ (easy-medium: fetch+extract text, keyless) |
+| Read web pages by link | "Summarize this URL" | ChatGPT, Perplexity | ✅ paste a link → auto-read + answer |
 
 ## 5. Creating stuff
 
@@ -69,23 +69,23 @@ Big names checked: **ChatGPT, Google Gemini, Claude, Perplexity, Grok, Copilot, 
 | Feature | What it means | Big AIs | Aether |
 |---|---|---|---|
 | Chat context memory | Remembers the conversation you're in | All | ✅ (last 20 messages sent) |
-| Long-term memory | "Remember I'm allergic to nuts" across chats | ChatGPT (best), Gemini | ❌ (medium: a `memories` table + prompt injection — very doable) |
-| Custom AI personas | Make your own bot with a personality | ChatGPT GPTs, Character.AI | ❌ (medium: same tech as custom instructions) |
+| Long-term memory | "Remember I'm allergic to nuts" across chats | ChatGPT (best), Gemini | ✅ auto-extraction + management UI |
+| Custom AI personas | Make your own bot with a personality | ChatGPT GPTs, Character.AI | ✅ persona manager + composer selector |
 
 ## 7. Sharing & working together
 
 | Feature | What it means | Big AIs | Aether |
 |---|---|---|---|
-| Share a chat link | Send a read-only link of a conversation | ChatGPT, Claude, Gemini | ❌ (easy: public read-only route + token) |
+| Share a chat link | Send a read-only link of a conversation | ChatGPT, Claude, Gemini | ✅ /share/{token} public page |
 | Copy any answer | One-click copy | All | ✅ |
-| Export answer as file | Save an answer as .md/.txt | partial | ❌ (trivial) |
+| Export answer as file | Save an answer as .md/.txt | partial | ✅ export buttons |
 | Team workspace | Multiple people, shared stuff, roles | ChatGPT Teams, Claude Teams | 🟡 (we have multi-user + admin roles, no shared spaces) |
 
 ## 8. Power tools (agents & integrations)
 
 | Feature | What it means | Big AIs | Aether |
 |---|---|---|---|
-| Scheduled tasks | "Every Monday, summarize my week" | ChatGPT Tasks | ❌ (medium: cron-style table; on Vercel use Cron Jobs — free) |
+| Scheduled tasks | "Every Monday, summarize my week" | ChatGPT Tasks | ✅ ⏰ daily tasks + Vercel cron |
 | Agent mode (does things for you) | Books, browses, clicks for you | ChatGPT Operator, Gemini | ❌ (not realistic free) |
 | Plugins/integrations (Gmail, Calendar) | Connect other apps | ChatGPT, Gemini | ❌ (each needs OAuth setup) |
 | API for developers | Others can build on your app | OpenAI, Anthropic | 🟡 (we *have* a REST API with auth — just not public-documented) |

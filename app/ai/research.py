@@ -168,3 +168,27 @@ async def research(query: str) -> ResearchResult:
         ])
         passages = list(zip(hits[:3], [e or "" for e in extracts]))
         return compose(query, passages, ddg_abstract, ddg_sources)
+
+
+# ------------------------------------------------------- article reading
+
+async def extract_article(url: str) -> dict:
+    """Fetch a web page and extract readable text (no AI, no keys)."""
+    from html import unescape
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_UA,
+                                 follow_redirects=True) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+    page = resp.text
+    title_m = re.search(r"<title[^>]*>(.*?)</title>", page, re.IGNORECASE | re.DOTALL)
+    title = unescape(_clean(title_m.group(1)))[:200] if title_m else url
+    # strip non-content blocks then tags
+    page = re.sub(r"(?is)<(script|style|noscript|svg|header|footer|nav|form)[^>]*>.*?</\1>",
+                  " ", page)
+    text = re.sub(r"(?s)<[^>]+>", " ", page)
+    text = unescape(_clean(re.sub(r"\s+", " ", text)))
+    # heuristic body start: skip boilerplate heads
+    words = text.split()
+    return {"url": url, "title": title or url,
+            "text": " ".join(words[:4000])}

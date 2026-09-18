@@ -26,6 +26,21 @@ EDITOR_PROMPT = (
     "- Do not add commentary about editing — just output the final answer"
 )
 
+REASONING_PROMPT = (
+    "Before answering, reason through the problem privately and carefully: "
+    "consider alternative interpretations, verify your logic, check for "
+    "errors, then present only the polished final answer. Prefer accuracy "
+    "over speed. If uncertain, say precisely what is uncertain and why."
+)
+
+FACT_EXTRACT_PROMPT = (
+    "Extract durable facts about the user (preferences, identity, ongoing "
+    "projects, constraints) worth remembering for future conversations. "
+    "Respond with ONLY a JSON array of short strings. Return [] if nothing "
+    "worth remembering. Never store sensitive data (passwords, full names of "
+    "third parties, secrets)."
+)
+
 POLISH_TRIGGERS = re.compile(
     r"\b(explain|why|how (?:do|does|did|can|could|would)|compare|pros and cons|"
     r"step[- ]by[- ]step|essay|report|article|story|detailed|in depth|in-depth|"
@@ -87,13 +102,47 @@ async def polish_answer(question: str, draft: str,
     return "".join(chunks).strip() or draft
 
 
+def build_system_prompt(system_prefix: str = "",
+                        reasoning: bool = False) -> str:
+    parts = [SYSTEM_PROMPT]
+    if system_prefix:
+        parts.append(system_prefix.strip())
+    if reasoning:
+        parts.append(REASONING_PROMPT)
+    return "\n\n".join(p for p in parts if p)
+
+
+async def extract_facts(question: str, answer: str) -> list[str]:
+    """Ask a fast model for durable user facts. Best-effort, never raises."""
+    try:
+        raw = await client.complete(
+            [{"role": "system", "content": FACT_EXTRACT_PROMPT},
+             {"role": "user", "content":
+                 f"USER MESSAGE:\n{question[:1000]}\n\nASSISTANT ANSWER:\n{answer[:1500]}"}],
+            fast=True, temperature=0.0, max_tokens=200)
+        import json as _json
+        data = _json.loads(re.search(r"\[.*\]", raw, re.DOTALL).group(0))
+        if isinstance(data, list):
+            return [str(x).strip()[:300] for x in data
+                    if isinstance(x, str) and x.strip()][:3]
+    except Exception:
+        pass
+    return []
+
+
 async def smart_answer(
     question: str,
     history: list[dict],
     *,
     force_polish: bool = False,
     fast: bool = False,
+    system_prefix: str = "",
+    reasoning: bool = False,
+    user_content: str | list | None = None,
 ) -> typing.AsyncIterator[dict]:
+    """`question` is plain text (used for heuristics/polish/memory);
+    `user_content` optionally overrides the draft user message (e.g. for
+    OpenAI-style vision content lists)."""
     """Yields SSE-style events:
        {"type": "phase", "phase": "draft"}
        {"type": "delta", "text": "..."}
@@ -103,11 +152,15 @@ async def smart_answer(
     # ---- Stage 1: draft (streamed live to the user)
     yield {"type": "phase", "phase": "draft"}
     draft_chunks: list[str] = []
+    used_keys: list[str] = []
     try:
         async for delta in client.stream_chat(
-            [{"role": "system", "content": SYSTEM_PROMPT}, *history,
-             {"role": "user", "content": question}],
-            fast=fast,
+            [{"role": "system",
+              "content": build_system_prompt(system_prefix, reasoning)},
+             *history,
+             {"role": "user", "content": user_content or question}],
+            fast=fast and not reasoning,
+            used=used_keys,
         ):
             draft_chunks.append(delta)
             yield {"type": "delta", "text": delta}

@@ -47,3 +47,37 @@ async def upload_file(file: UploadFile, user=Depends(get_current_user)):
                             detail="Upload storage unavailable in this environment.")
     return {"filename": name, "stored_as": safe_name,
             "size": len(data), "status": "uploaded"}
+
+
+@router.post("/extract-pdf")
+async def extract_pdf(file: UploadFile, user=Depends(get_current_user)):
+    """Extract text from a PDF into a reusable doc for chat Q&A."""
+    from app.database import save_doc
+
+    name = file.filename or ""
+    if not name.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only .pdf files are supported.")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="PDF too large (max 10 MB)")
+    import io
+
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(data))
+        pages = min(len(reader.pages), 80)
+        text = "\n".join((reader.pages[i].extract_text() or "")
+                          for i in range(pages))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422,
+                            detail=f"Could not read this PDF ({exc}).")
+    text = text.strip()[:40000]
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail="This PDF has no extractable text (likely a scan/image PDF).")
+    doc_id = save_doc(user["id"], name or "document.pdf", text)
+    return {"doc_id": doc_id, "name": name, "pages": pages,
+            "chars": len(text), "preview": text[:400]}
