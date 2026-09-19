@@ -1,59 +1,101 @@
-# Aether — multi-AI assistant PWA
+# Aether — free keyless AI assistant (PWA)
 
-Chat with the best answer, not just the fastest one: Aether drafts with one
-AI, then a second AI polishes the answer when the question deserves it.
-Includes voice input/output, image generation, and presentation building
-(view in-app or export real `.pptx`). Runs free on Vercel + Turso + Groq/Cerebras.
+Chat, voice calls, images and real presentations — **with no API keys, no
+signups and no cost**. Everything runs on free shared services: chat, voice and
+presentations use the keyless Pollinations tier, research reads Wikipedia and
+DuckDuckGo directly, and images come from Pollinations' free generator.
+
+Because that capacity is shared, it is sized for a friendly crowd rather than
+unlimited traffic: requests queue, pace themselves, and you will sometimes see
+an honest cooldown counter. The UI says so — no "unlimited" promises.
+
+- **Live**: https://aiaether.vercel.app
+- **Stack**: FastAPI + Turso/SQLite, vanilla-JS PWA (no build step), Vercel
 
 ## Features
 
 | Feature | How it works |
 |---|---|
-| 💬 Smart chat | Draft (one provider) → optional polish (a *different* key/provider) → streamed via SSE |
-| 🚫 **Zero-key mode** | **Works with NO API keys at all**: chat via keyless Pollinations, research via Wikipedia + DuckDuckGo, voice via browser speech, images via Pollinations |
-| 🔑 Key rotation | Round-robins Gemini + 2× Cerebras + Groq; 429 → cooldown → next key; 401 → key disabled. **One `GEMINI_API_KEY` alone powers chat + speech-to-text + text-to-speech** |
-| 🎤 Voice in | Browser `MediaRecorder` → Groq Whisper → Gemini native audio (fallback chain) |
-| 🔊 Voice out | Groq TTS → Gemini TTS → browser `speechSynthesis` (3-tier fallback) |
-| 🖼️ Images | Pollinations.ai (free, keyless) |
-| 📊 Presentations | AI writes slide JSON → in-app web slides + `.pptx` export (python-pptx) |
-| 👥 Multi-user | JWT + httpOnly cookie auth, login throttling, per-user daily limits |
-| 🛠️ Admin dashboard | In-app UI: live stats, user management (promote/demote/delete, owner protected), conversation moderation, provider health |
-| 📚 Research mode | Real information from Wikipedia + DuckDuckGo with citations — **no AI generation at all** |
-| 🗄️ Storage | SQLite locally, Turso (HTTP SQLite) on Vercel — same code, auto-detected |
+| 💬 Chat | SSE streaming with keep-alive pings, phase labels, stop-keeps-partial, regenerate, edit & resend, follow-up chips, code cards with copy buttons |
+| 🔊 **Voice calls** | Full-screen call mode: sentence-by-sentence TTS (keyless first, then neural browser voices), continuous listening with silence auto-send, barge-in, live captions, mute |
+| 📊 Presentations | Incremental build (outline → slide by slide) with per-slide retry/resume, in-app viewer, `.pptx` **and** standalone HTML export |
+| 🖼️ Images | Aspect-ratio picker, download, regenerate, prompt history |
+| 🧠 Teach Mode | A 5-question interview plus "Teach Aether" on any answer; memories are editable and injected into future prompts |
+| 📈 Honest limits | Usage meter (resets midnight UTC), per-user daily cap, queue position and cooldown countdown with auto-retry |
+| 📚 Research mode | Real sources from Wikipedia + DuckDuckGo — no AI generation at all |
+| 🔐 Accounts | JWT sessions (httpOnly cookie or Bearer), bcrypt passwords, login throttling |
+| 🛠️ Admin | In-app stats, user management, conversation moderation, provider health |
+| 🗄️ Storage | Turso over HTTP on Vercel, local SQLite otherwise; self-healing schema, honest warning banner when storage is temporary |
 
-## Quick start
+## Quick start (no keys needed)
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # add GROQ_API_KEY etc. — never commit .env
-python run.py          # http://localhost:8000
+cp .env.example .env          # optional: only APP_SECRET / Turso / OWNER_EMAIL
+python run.py                 # http://localhost:8000
 ```
 
-First registered account whose email equals `OWNER_EMAIL` becomes admin.
+The first account whose email matches `OWNER_EMAIL` becomes admin.
+
+## Configuration
+
+Everything is optional — the app works with an empty environment.
+
+| Variable | Why |
+|---|---|
+| `APP_SECRET` | Signs session JWTs. **Recommended in production.** Without it the key is derived from `TURSO_AUTH_TOKEN`, or generated per process (logins then reset on restart) — `/api/ai/status` reports which case applies and the UI shows it honestly. |
+| `TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN` | Persistent database on Vercel. Unset → local SQLite file, or `/tmp` on Vercel with a visible warning that data is temporary. |
+| `OWNER_EMAIL` | That account is promoted to admin on registration. |
+| `ALLOWED_ORIGINS` | Comma-separated CORS origins (default `*`). |
+| `DAILY_REQUEST_LIMIT` | Per-user, per-day AI request cap (default 300). |
+
+There is no API-key code path in the product: the assistant never asks for keys.
 
 ## API overview
 
 ```
-POST /api/auth/register|login      GET /api/auth/me
-GET/POST /api/conversations        GET/PATCH/DELETE /api/conversations/{id}
-GET /api/conversations/{id}/messages
-POST /api/chat/stream              (SSE: phase/delta/final/done events)
-POST /api/voice/transcribe         (multipart audio)
-POST /api/voice/tts                (text -> wav, 503 => use browser TTS)
-POST /api/images/generate
-POST /api/presentations/generate   (topic -> slide JSON)
-POST /api/presentations/pptx       (slide JSON -> .pptx download)
-GET  /api/ai/status                GET /api/health
-GET  /api/admin/stats              (admin only)
+POST /api/auth/register|login|logout   GET /api/auth/me   POST /api/auth/password
+GET/POST /api/conversations            GET/PATCH/DELETE /api/conversations/{id}
+GET  /api/conversations/{id}/messages  POST /api/conversations/{id}/truncate
+GET  /api/conversations/{id}/export    GET /api/chats/search?q=
+POST /api/chat/stream                  (SSE: meta/phase/ping/delta/final/done/error)
+POST /api/chat/partial                 (save a stopped answer)
+POST /api/presentations/plan           (outline -> deck_id + slide titles)
+POST /api/presentations/slide          (generate/regenerate ONE slide)
+GET  /api/presentations/decks          GET/DELETE /api/presentations/deck/{id}
+POST /api/presentations/pptx|html      (deck_id -> file download)
+POST /api/images/generate              GET /api/images/download?url=
+GET  /api/voice/voices                 POST /api/voice/tts
+POST /api/voice/transcribe             (503 => use browser speech recognition)
+POST /api/teach/{start,answer,finish,improve}
+GET  /api/usage                        GET /api/ai/status      GET /api/health
+GET  /api/settings/{instructions,memory,personas,export}
+GET  /api/admin/{overview,users,conversations,info}
 ```
 
-## Configuration
+## Verification
 
-All config is env-driven — see `.env.example`. Deployment guide: [DEPLOY.md](DEPLOY.md).
+Four suites, all runnable offline (the mock server stubs only the free-tier
+providers, nothing else):
 
-## Security notes
+```bash
+rm -f /tmp/aether-test.db && .venv/bin/python tests/test_offline.py   # 43 backend checks
+node tests/frontend-smoke.mjs                                       # 51 jsdom checks
 
-- API keys live ONLY in environment variables (local `.env` / Vercel settings).
-- Passwords are bcrypt-hashed; sessions are signed JWTs (7 days).
-- Per-user daily request limit protects the free tiers.
+# real HTTP against a real server + database
+DATABASE_URL=/tmp/aether-preview.db .venv/bin/python -m uvicorn app.main:app --port 8000 &
+AETHER_BASE=http://127.0.0.1:8000 node tests/frontend-live.mjs       # 30 checks
+
+# happy paths (streaming, decks, exports, voice) with the free tier stubbed
+AETHER_MOCK_PORT=8001 .venv/bin/python tests/mock_server.py &
+AETHER_BASE=http://127.0.0.1:8001 node tests/frontend-e2e.mjs        # 36 checks
+```
+
+`tests/e2e_preview.py` is the CI suite: it tests a deployment (or a local boot)
+end-to-end with zero keys and posts its report on the pull request.
+
+## Deployment
+
+See [DEPLOY.md](DEPLOY.md) — Vercel import plus (optionally) Turso. Zero keys
+required; `APP_SECRET` is the only variable worth setting on day one.
