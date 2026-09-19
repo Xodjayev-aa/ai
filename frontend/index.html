@@ -288,17 +288,48 @@
       <div class="tool-form settings-form">
 
         <section class="sett-block">
-          <h3>Appearance & voice</h3>
+          <h3>Appearance</h3>
           <div class="form-row">
             <button id="theme-toggle-settings" class="btn"><svg class="ic" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg><span>Dark</span></button>
             <button id="voice-test" class="btn ghost">Test voice</button>
           </div>
-          <label class="sett-label" for="voice-select">Call voice</label>
+        </section>
+
+        <section class="sett-block" id="voice-block">
+          <h3>Voice</h3>
+          <label class="switch-row">
+            <input type="checkbox" id="voice-hd" checked>
+            <span>HD neural voices <span class="muted tiny">(free, keyless, ~140 languages)</span></span>
+          </label>
+          <p class="muted tiny" id="voice-hd-note">If the HD service is busy, Aether
+            automatically switches to the backup voice, then to your device's best natural voice.
+            A voice call never goes silent.</p>
+          <label class="sett-label" for="voice-language">Language</label>
+          <select id="voice-language"><option value="auto">Auto (the language used)</option></select>
+          <label class="sett-label" for="voice-select">Voice</label>
           <select id="voice-select"></select>
           <label class="sett-label" for="voice-speed">Speaking speed <b id="voice-speed-value">1.0×</b></label>
-          <input id="voice-speed" type="range" min="0.7" max="1.4" step="0.05" value="1">
-          <p class="muted tiny">Free shared voice servers can have short waits. If they are busy,
-            Aether switches to your device's best natural voice instead.</p>
+          <input id="voice-speed" type="range" min="0.8" max="1.2" step="0.05" value="1">
+          <label class="switch-row">
+            <input type="checkbox" id="allow-strong-language">
+            <span>Allow strong language</span>
+          </label>
+          <p class="muted tiny">Off = family-friendly. On = the AI may swear when the persona
+            or moment calls for it.</p>
+          <label class="sett-label" for="exam-preset">Speaking exam <span class="muted tiny">(voice call only)</span></label>
+          <select id="exam-preset">
+            <option value="off">Off — normal conversation</option>
+            <option value="ielts">IELTS speaking mock</option>
+            <option value="cefr_b1">CEFR B1 practice</option>
+            <option value="cefr_b2">CEFR B2 practice</option>
+            <option value="school">School oral exam</option>
+            <option value="custom">Custom topic</option>
+          </select>
+          <input id="exam-topic" type="text" class="hidden" maxlength="120"
+                 placeholder="Exam topic (e.g. technology in education)">
+          <p class="muted tiny">The examiner asks one question at a time, gives a short tip after
+            each answer, and finishes with a feedback card: estimated band, three strengths and
+            three concrete fixes.</p>
         </section>
 
         <section class="sett-block">

@@ -655,6 +655,20 @@ textarea { resize: none; line-height: 1.5; }
 .call-btn.primary.live { background: var(--accent); color: #14141c; }
 .call-btn.end { background: var(--err); border-color: var(--err); color: #fff; }
 .call-btn.on { background: var(--warn); border-color: var(--warn); color: #201a06; }
+.call-btn:not(.primary):not(.end) { font-size: 13px; font-weight: 600; }
+#call-done, #call-finish { width: auto; min-width: 74px; height: 44px; padding: 0 16px; border-radius: 22px; }
+.call-modes { display: inline-flex; gap: 4px; padding: 3px; border-radius: 999px; background: var(--bg2); border: 1px solid var(--line2); }
+.mode-btn {
+  border: 0; background: transparent; color: var(--text2); font: inherit; font-size: 12.5px;
+  padding: 5px 14px; border-radius: 999px; cursor: pointer; transition: background .15s, color .15s;
+}
+.mode-btn:hover { color: var(--text); }
+.mode-btn.active { background: var(--btn-bg); color: var(--btn-fg); }
+.call-hud {
+  font-size: 12px; font-weight: 600; letter-spacing: .01em; color: var(--accent);
+  padding: 4px 11px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 13%, transparent);
+}
+.call-top { gap: 12px; }
 .call-settings { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; justify-content: center; }
 .call-field { display: flex; flex-direction: column; gap: 5px; min-width: 190px; }
 .call-field select { padding: 9px 11px; font-size: 13px; }
