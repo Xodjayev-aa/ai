@@ -82,8 +82,13 @@ app.include_router(voice.router)
 app.include_router(usage.router)
 app.include_router(teach.router)
 
-# Serve the PWA directly from the API for local dev (python run.py).
-# On Vercel, static hosting + route rules handle this instead.
+# Serve the PWA from the API process itself. This is the ONLY serving path:
+# locally (python run.py) and on Vercel, where vercel.json routes every
+# request — including /assets/* and /icons/* — to this function. Keeping one
+# code path means what the tests verify is exactly what production serves
+# (the platform's static layer 500'd on /icons/* in prod while every local
+# and CI check of the files passed — so the files are no longer on the
+# platform's path at all).
 _FRONTEND = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
 if os.path.isdir(_FRONTEND):
     from fastapi.staticfiles import StaticFiles
