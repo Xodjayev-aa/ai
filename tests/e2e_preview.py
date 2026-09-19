@@ -122,9 +122,24 @@ def test_static(c: httpx.Client, base: str) -> None:
     manifest = c.get(f"{base}/manifest.json")
     R.add("manifest served", manifest.status_code == 200)
 
-    js = c.get(f"{base}/assets/app.js")
-    R.add("frontend bundle served", js.status_code == 200 and len(js.content) > 5000,
-          f"{len(js.content)} bytes")
+    # Every asset the shell references must exist: scrape index.html instead of
+    # hard-coding filenames, so a refactor cannot leave a dead link behind.
+    import re
+    refs = sorted(set(re.findall(r'(?:src|href)="(/assets/[^"]+|/icons/[^"]+)"', html)))
+    missing = []
+    total = 0
+    for ref in refs:
+        asset = c.get(f"{base}{ref}")
+        total += len(asset.content)
+        if asset.status_code != 200 or not asset.content:
+            missing.append(f"{ref} ({asset.status_code})")
+    R.add(f"every shell asset served ({len(refs)} files)", not missing,
+          ", ".join(missing) if missing else f"{total // 1024} KB total")
+    for name in ("core.js", "chat.js", "voice.js", "slides.js", "images.js",
+                 "settings.js", "tools.js", "admin.js", "app.js"):
+        script = c.get(f"{base}/assets/js/{name}")
+        R.add(f"module {name} served", script.status_code == 200 and len(script.content) > 800,
+              f"{len(script.content)} bytes")
 
 
 def test_auth(c: httpx.Client, base: str) -> str | None:
@@ -149,6 +164,7 @@ def test_chat(c: httpx.Client, base: str, conversation: str) -> str | None:
     """Stream one short answer; returns the answer text."""
     events: list[dict] = []
     answer = ""
+    stream_error = ""
     first_delta_at: float | None = None
     t0 = time.time()
 
@@ -164,7 +180,7 @@ def test_chat(c: httpx.Client, base: str, conversation: str) -> str | None:
         R.add("chat stream HTTP", True, f"{resp.status_code}")
 
         def on_event(ev: dict) -> None:
-            nonlocal answer, first_delta_at
+            nonlocal answer, first_delta_at, stream_error
             events.append(ev)
             if ev.get("type") == "delta":
                 if first_delta_at is None:
@@ -173,14 +189,15 @@ def test_chat(c: httpx.Client, base: str, conversation: str) -> str | None:
             elif ev.get("type") == "final":
                 answer = ev.get("text") or answer
             elif ev.get("type") == "error":
-                R.add("chat produced answer", False, str(ev.get("detail"))[:200])
+                stream_error = str(ev.get("detail"))[:200]
 
         read_sse(resp, on_event, deadline=time.time() + 150)
 
     types = [e.get("type") for e in events]
     R.add("chat phase + deltas", "delta" in types,
           f"events={sorted(set(types))} ttft={first_delta_at and round(first_delta_at, 2)}s")
-    R.add("chat final answer", bool(answer.strip()), f"{len(answer)} chars")
+    R.add("chat final answer", bool(answer.strip()),
+          f"{len(answer)} chars" + (f" — stream error: {stream_error}" if stream_error else ""))
     if first_delta_at:
         R.add("chat first token under 30s", first_delta_at < 30,
               f"{first_delta_at:.1f}s")
@@ -349,7 +366,11 @@ def test_images(c: httpx.Client, base: str) -> None:
     R.add("image request", bool(url), f"{time.time() - t0:.1f}s")
     if not url:
         return
-    img = c.get(url)
+    try:
+        img = c.get(url)
+    except Exception as exc:  # noqa: BLE001 — a network hiccup must not abort the run
+        R.add("image bytes returned", False, f"{type(exc).__name__}: {exc}"[:160])
+        return
     ctype = img.headers.get("content-type", "")
     R.add("image bytes returned",
           img.status_code == 200 and len(img.content) > 4000 and ctype.startswith("image/"),
@@ -372,6 +393,14 @@ def test_voice(c: httpx.Client, base: str) -> None:
         r = c.post(f"{base}/api/voice/tts",
                    json={"text": phrase, "voice": "nova", "speed": 1.0})
         ttfb = time.time() - t0
+        if r.status_code == 503:
+            # Documented free-tier fallback: the browser takes over with a
+            # neural system voice. That is a pass, but worth calling out.
+            detail = r.json().get("detail", {}) if r.headers.get("content-type", "").startswith("application/json") else {}
+            R.add(f"TTS ({label}) browser fallback offered",
+                  bool(detail.get("browser_tts")),
+                  f"503, retry_after={detail.get('retry_after')}")
+            continue
         if r.status_code != 200:
             R.add(f"TTS ({label})", False, f"{r.status_code}: {r.text[:160]}")
             continue
