@@ -395,6 +395,26 @@
 
   /* ───────────────────────────── start ───────────────────────────── */
 
+  /* Boot check for a stored session. Retries once (the first call after a
+     deploy can hit a cold database) and then says which of the four things
+     actually happened — a 401 is not always "your session expired". */
+  async function checkSession() {
+    try {
+      await A.apiRetry("/api/auth/me", {}, { attempts: 2, delay: 250 });
+      return { state: "ok" };
+    } catch (err) {
+      if (err.status === 401) {
+        if (isMissingAccount(err)) return { state: "reset", err };
+        if (await dbHealthy()) return { state: "expired", err };
+        return { state: "warming", err };
+      }
+      return { state: "unreachable", err };
+    }
+  }
+
+  // Exposed for tests (tests/frontend-smoke.mjs) — harmless in production.
+  A.__testSessionCheck = checkSession;
+
   async function boot() {
     A.theme.init();
     initShell();
@@ -404,42 +424,34 @@
     A.on("memory:changed", () => A.loadSettings?.());
 
     if (A.session.token) {
-      try {
-        // Retry once: the first call after a deploy can hit a cold database.
-        await A.apiRetry("/api/auth/me", {}, { attempts: 2, delay: 250 });
+      const result = await checkSession();
+      if (result.state === "ok") {
         await enterApp();
         initServiceWorker();
         return;
-      } catch (err) {
-        if (err.status === 401) {
-          if (isMissingAccount(err)) {
-            showStorageReset();
-            initServiceWorker();
-            return;
-          }
-          if (await dbHealthy()) {
-            showSessionExpired();
-            initServiceWorker();
-            return;
-          }
-          // A 401 while storage is unhealthy is not proof the session died.
-          showAuthView();
-          $("#retry-btn").classList.remove("hidden");
-          const box = $("#auth-error");
-          box.textContent = "Storage is warming up — try again in a few seconds.";
-          box.classList.remove("hidden");
-          return;
-        }
-        // 503 "Warming up" / network / 5xx: keep the session and offer a retry.
-        showAuthView();
-        $("#retry-btn").classList.remove("hidden");
-        const box = $("#auth-error");
-        box.textContent = err.status === 503 && err.detail
-          ? err.detail
-          : "Can't reach the server right now — your session is saved.";
-        box.classList.remove("hidden");
+      }
+      if (result.state === "reset") {
+        showStorageReset();
+        initServiceWorker();
         return;
       }
+      if (result.state === "expired") {
+        showSessionExpired();
+        initServiceWorker();
+        return;
+      }
+      // "warming" (401 while storage is unhealthy) and "unreachable"
+      // (503/network/5xx): the session is kept and the user gets a retry.
+      showAuthView();
+      $("#retry-btn").classList.remove("hidden");
+      const box = $("#auth-error");
+      box.textContent = result.state === "warming"
+        ? "Storage is warming up — try again in a few seconds."
+        : (result.err?.status === 503 && result.err?.detail)
+          ? result.err.detail
+          : "Can't reach the server right now — your session is saved.";
+      box.classList.remove("hidden");
+      return;
     }
     showAuthView();
     initServiceWorker();

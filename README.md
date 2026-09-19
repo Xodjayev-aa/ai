@@ -85,15 +85,16 @@ providers, nothing else):
 ```bash
 rm -f /tmp/aether-test.db && .venv/bin/python tests/test_offline.py   # 43 backend checks
 .venv/bin/python -m pytest tests/test_hd_tts.py -q                  # 8 HD-voice unit checks
-node tests/frontend-smoke.mjs                                       # 73 jsdom checks
+.venv/bin/python -m pytest tests/test_auth_resilience.py -q         # 9 auth-retry checks
+node tests/frontend-smoke.mjs                                       # 99 jsdom checks
 
 # real HTTP against a real server + database
 DATABASE_URL=/tmp/aether-preview.db .venv/bin/python -m uvicorn app.main:app --port 8000 &
-AETHER_BASE=http://127.0.0.1:8000 node tests/frontend-live.mjs       # 37 checks
+AETHER_BASE=http://127.0.0.1:8000 node tests/frontend-live.mjs       # 40 checks
 
 # happy paths (streaming, decks, exports, voice) with the free tier stubbed
 AETHER_MOCK_PORT=8001 .venv/bin/python tests/mock_server.py &
-AETHER_BASE=http://127.0.0.1:8001 node tests/frontend-e2e.mjs        # 56 checks
+AETHER_BASE=http://127.0.0.1:8001 node tests/frontend-e2e.mjs        # 58 checks
 ```
 
 `tests/e2e_preview.py` is the CI suite: it tests a deployment (or a local boot)

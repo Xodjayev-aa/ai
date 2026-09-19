@@ -8,7 +8,7 @@
  *
  * Any uncaught exception or missing element fails the run.
  */
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -22,6 +22,32 @@ const SCRIPTS = [
   "core.js", "chat.js", "voice.js", "slides.js", "images.js",
   "settings.js", "tools.js", "admin.js", "app.js",
 ];
+const MODULE_SOURCES = SCRIPTS
+  .map((name) => readFileSync(join(root, "frontend/assets/js", name), "utf8"))
+  .join("\n");
+const SW_SOURCE = readFileSync(join(root, "frontend/sw.js"), "utf8");
+const MANIFEST = JSON.parse(readFileSync(join(root, "frontend/manifest.json"), "utf8"));
+
+function fileExists(rel) {
+  const path = join(root, "frontend", rel);
+  return existsSync(path) && statSync(path).isFile();
+}
+
+// The shell = every file the app actually loads: index.html's own references
+// plus the manifest icons. (frontend/assets/app.js is a dead v2 leftover that
+// nothing loads, so it is deliberately not part of the precache set.)
+function shellRefs() {
+  const fromHtml = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+|\/icons\/[^"]+|\/manifest\.json)"/g)]
+    .map((match) => match[1]);
+  const fromManifest = (MANIFEST.icons || []).map((icon) => icon.src);
+  return [...new Set(["/index.html", "/", ...fromHtml, ...fromManifest])].sort();
+}
+
+function precachedPaths() {
+  const block = SW_SOURCE.slice(SW_SOURCE.indexOf("const SHELL = ["),
+                                SW_SOURCE.indexOf("];", SW_SOURCE.indexOf("const SHELL = [")));
+  return [...block.matchAll(/"([^"]+)"/g)].map((match) => match[1]).sort();
+}
 
 const failures = [];
 const errors = [];
@@ -43,6 +69,8 @@ const state = {
   calls: [],
   tts: 0,
   ttsBodies: [],
+  authMeFail: null,
+  storageUnhealthy: false,
   prefs: {
     voice_hd: true, voice_language: "uz", voice_name: "uz-UZ-SardorNeural",
     allow_strong_language: false,
@@ -111,7 +139,15 @@ function fakeFetch(url, options = {}) {
     if (method === "PUT") Object.assign(state.prefs, body);
     return Promise.resolve(json(state.prefs));
   }
-  if (path === "/api/auth/me") return Promise.resolve(json({ id: 1, email: "tester@example.com", is_admin: false }));
+  if (path === "/api/auth/me") {
+    if (state.authMeFail && state.authMeFail.times > 0) {
+      state.authMeFail.times -= 1;
+      const { status, body } = state.authMeFail;
+      if (state.authMeFail.times === 0) state.authMeFail = null;
+      return Promise.resolve(json(body, status));
+    }
+    return Promise.resolve(json({ id: 1, email: "tester@example.com", is_admin: false }));
+  }
   if (path === "/api/conversations" && method === "GET") return Promise.resolve(json([conversation]));
   if (path === "/api/conversations" && method === "POST") return Promise.resolve(json(conversation));
   if (path === "/api/conversations/conv-1") return Promise.resolve(json({ ...conversation, messages: state.messages }));
@@ -141,7 +177,10 @@ function fakeFetch(url, options = {}) {
   if (path === "/api/ai/status") {
     return Promise.resolve(json({
       version: "4.0.0", database_mode: "turso",
-      database: { mode: "turso", label: "Turso (persistent)", persistent: true, warning: "" },
+      database: state.storageUnhealthy
+        ? { mode: "turso", label: "Turso (persistent)", persistent: true, warning: "",
+            schema: { ready: false, error: "OperationalError: database is locked" } }
+        : { mode: "turso", label: "Turso (persistent)", persistent: true, warning: "" },
       providers_configured: 1,
       providers: [{ name: "pollinations-free", kind: "pollinations", key: "anonymous", disabled: false, cooling_down: false, ok: 1, failed: 0, queue: { cooling_down: false, queued_requests: 0, interval_seconds: 5, retry_after_seconds: 0, requests_last_minute: 1 } }],
       features: {}, keyless: { queue: {} }, limits: {}, users: 3,
@@ -277,6 +316,67 @@ async function run() {
   check("status pill reflects the keyless provider",
         ($("#mode-pill")?.textContent || "").includes("Free AI"), $("#mode-pill")?.textContent);
   check("conversation list rendered", window.document.querySelectorAll(".conv-item").length === 1);
+
+  // ── shipped static shell: the new mark, the copy, the service worker ──
+  const iconLinks = [...html.matchAll(/<link rel="(?:icon|apple-touch-icon)"[^>]*href="([^"]+)"/g)]
+    .map((match) => match[1]);
+  check("index.html references the new favicon set",
+        ["/icons/favicon.svg", "/icons/favicon-16.png", "/icons/favicon-32.png",
+         "/icons/apple-touch-icon.png"].every((href) => iconLinks.includes(href)),
+        iconLinks.join(", "));
+
+  const ICONS = ["favicon.svg", "favicon-16.png", "favicon-32.png", "apple-touch-icon.png",
+                 "icon-192.png", "icon-512.png", "splash-1170x2532.png", "splash-1284x2778.png"];
+  const brokenIcons = ICONS.filter((name) => {
+    const path = join(root, "frontend/icons", name);
+    return !existsSync(path) || statSync(path).size < (name.endsWith(".svg") ? 200 : 300);
+  });
+  check("every icon in the set ships and is non-empty", brokenIcons.length === 0,
+        brokenIcons.join(", ") || `${ICONS.length} files`);
+
+  const faviconSvg = readFileSync(join(root, "frontend/icons/favicon.svg"), "utf8");
+  check("favicon.svg is the rounded-A monogram",
+        faviconSvg.includes("M5.4 19.8 12 4.2l6.6 15.6") && faviconSvg.includes("M8.1 14.6h7.8")
+        && faviconSvg.includes('rx="5.4"'));
+  check("the old hexagon mark is gone from the shell",
+        !/20\.3 7\.3|7\.3Z/.test(html) && !/20\.3 7\.3/.test(MODULE_SOURCES));
+  check("login, sidebar and header carry the monogram",
+        (html.match(/stroke="currentColor"/g) || []).length >= 3,
+        `${(html.match(/stroke="currentColor"/g) || []).length} inline marks`);
+  check("the in-app logo icon is the monogram, not the sparkle",
+        MODULE_SOURCES.includes("M5.4 19.8 12 4.2l6.6 15.6")
+        && !MODULE_SOURCES.includes("4.6 4.4 9 9"));
+  check("manifest references the shipped icons",
+        (MANIFEST.icons || []).every((icon) => fileExists(icon.src)));
+
+  const UI_TEXT = `${html}\n${MODULE_SOURCES}`;
+  check('"be kind" is gone from the shipped UI', !/be kind/i.test(UI_TEXT));
+  check('"do not hammer" is gone from the shipped UI',
+        !/do not hammer|hammer it|hammering it/i.test(UI_TEXT));
+  check("no moralising copy in the shipped UI",
+        !/be respectful|please be kind|be mindful|don't abuse|be considerate|friendly crowd/i.test(UI_TEXT));
+  check("login subcopy is the neutral one",
+        html.includes("One free account keeps")
+        && !html.includes("The AI itself is a free shared tier"));
+  check("login footer is the neutral one",
+        html.includes("Free forever. No credit card, no API keys."));
+  check("the only capacity copy left is About + the cooldown",
+        (UI_TEXT.match(/short waits/gi) || []).length <= 2,
+        `${(UI_TEXT.match(/short waits/gi) || []).length} mentions`);
+
+  check("service worker cache bumped to aether-v12",
+        SW_SOURCE.includes('const CACHE = "aether-v12"'));
+  const precached = precachedPaths();
+  const shipped = shellRefs();
+  // "/" is the navigation entry point, served by index.html — not a file.
+  const deadEntries = precached.filter((path) => path !== "/" && !fileExists(path));
+  const notPrecached = shipped.filter((path) => !precached.includes(path)); // shipped, not listed
+  check("precache list matches the shipped shell exactly",
+        deadEntries.length === 0 && notPrecached.length === 0,
+        `listed but missing: ${deadEntries.join(", ") || "none"} · `
+        + `shipped but not listed: ${notPrecached.join(", ") || "none"}`);
+  check("the old cache name is not referenced anywhere",
+        !SW_SOURCE.includes("aether-v11"));
 
   // send a message and stream an answer
   $("#chat-input").value = "Say hello";
@@ -540,6 +640,80 @@ async function run() {
         && /finished/i.test(finishCall?.body?.message || ""), finishCall?.body?.message);
   window.Aether.endCall();
   await wait(60);
+
+  // ── auth reliability: retry once, honest session states, hash survival ──
+  const b64 = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const jwt = `${b64({ alg: "HS256" })}.${b64({ sub: "claim@example.com", exp: 4102444800 })}.sig`;
+  check("the email claim is readable from the stored JWT",
+        window.Aether.emailFromToken(jwt) === "claim@example.com");
+
+  window.location.hash = "#conv-42";
+  window.Aether.session.stashHash();
+  window.location.hash = "";
+  window.Aether.session.restoreHash();
+  check("an open conversation survives the login screen",
+        window.location.hash === "#conv-42", window.location.hash);
+  window.location.hash = "";
+
+  const meCalls = () => state.calls.filter((call) => call.path === "/api/auth/me").length;
+
+  // One cold-database hiccup at boot must not cost the user their session.
+  state.authMeFail = { status: 503, body: { detail: "Warming up — try again in a few seconds" }, times: 1 };
+  const meCallsBefore = meCalls();
+  let outcome = await window.Aether.__testSessionCheck();
+  check("a 503 at boot is retried once and then accepted",
+        outcome.state === "ok" && meCalls() - meCallsBefore === 2,
+        `${outcome.state} · ${meCalls() - meCallsBefore} calls`);
+
+  // Still cold after the retry: keep the session, explain, never say "expired".
+  state.authMeFail = { status: 503, body: { detail: "Warming up — try again in a few seconds" }, times: 9 };
+  outcome = await window.Aether.__testSessionCheck();
+  check("a database that stays cold is not treated as an expired session",
+        outcome.state === "unreachable" && outcome.err?.status === 503, outcome.state);
+  state.authMeFail = null;
+
+  // Valid JWT, wiped account: say so, and prefill the email from the claim.
+  window.localStorage.setItem("aether_token", jwt);
+  state.authMeFail = { status: 401, body: { detail: "User not found" }, times: 9 };
+  outcome = await window.Aether.__testSessionCheck();
+  check("a wiped account is detected as a storage reset", outcome.state === "reset", outcome.state);
+  state.authMeFail = null;
+  window.Aether.emit("session:expired", { status: 401, detail: "User not found" });
+  await wait(60);
+  check("storage reset says so and prefills the email",
+        !$("#auth-view").classList.contains("hidden")
+        && /Storage was reset/.test($("#toasts").textContent)
+        && $("#auth-email").value === "claim@example.com"
+        && $("#tab-register").classList.contains("active"),
+        `${$("#auth-email").value} · ${$("#auth-error").textContent}`);
+
+  // A real 401 with healthy storage is the only case that says "expired".
+  window.localStorage.setItem("aether_token", jwt);
+  state.authMeFail = { status: 401, body: { detail: "Invalid or expired token" }, times: 9 };
+  outcome = await window.Aether.__testSessionCheck();
+  state.authMeFail = null;
+  check("a confirmed 401 with healthy storage is an expiry", outcome.state === "expired", outcome.state);
+  window.Aether.emit("session:expired", { status: 401, detail: "Invalid or expired token" });
+  await wait(60);
+  check("session expiry only claims the session expired",
+        /Session expired — please sign in again/.test($("#toasts").textContent)
+        && !window.localStorage.getItem("aether_token"));
+
+  // A 401 while storage is unhealthy is not proof the session died.
+  window.localStorage.setItem("aether_token", jwt);
+  state.storageUnhealthy = true;
+  state.authMeFail = { status: 401, body: { detail: "Invalid or expired token" }, times: 9 };
+  outcome = await window.Aether.__testSessionCheck();
+  state.authMeFail = null;
+  check("a 401 while storage is unhealthy is a warm-up, not an expiry",
+        outcome.state === "warming", outcome.state);
+  window.Aether.emit("session:expired", { status: 401, detail: "Invalid or expired token" });
+  await wait(60);
+  check("the session is kept while storage is unhealthy",
+        Boolean(window.localStorage.getItem("aether_token"))
+        && /warming up/i.test($("#toasts").textContent));
+  state.storageUnhealthy = false;
+  window.localStorage.setItem("aether_token", "test-token");
 
   check("no runtime errors during the run", errors.length === 0, errors.join(" | "));
 

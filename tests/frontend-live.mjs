@@ -170,6 +170,11 @@ async function run() {
   const hdInfo = voices.hd || {};
   check("HD catalogue is advertised", hdInfo.enabled === true && (hdInfo.voices || []).length > 0,
         `${(hdInfo.voices || []).length} HD voices`);
+  check("/api/voice/voices still carries the hd block",
+        typeof hdInfo === "object" && hdInfo.enabled === true
+        && typeof hdInfo.default_voice === "string"
+        && Array.isArray(hdInfo.languages) && Array.isArray(hdInfo.voices),
+        Object.keys(hdInfo).join(", "));
   check("HD catalogue leads with uz, en, ru, tr",
         ["uz", "en", "ru", "tr"].every((code, i) => hdInfo.languages?.[i]?.code === code),
         (hdInfo.languages || []).slice(0, 4).map((l) => l.code).join(","));
@@ -259,9 +264,25 @@ async function run() {
     () => check("conversation deleted", true),
     (e) => check("conversation deleted", false, JSON.stringify(e.detail || e.message)));
 
-  // ── logout ──────────────────────────────────────────────────────
+  // ── sign out, then sign back in through the real login form ─────
+  window.location.hash = "#conv-roundtrip";
+  window.Aether.session.stashHash();          // what showAuthView() does
   window.Aether.session.clear();
+  $("#app-view").classList.add("hidden");
+  $("#auth-view").classList.remove("hidden");
   check("token cleared on logout", !window.localStorage.getItem("aether_token"));
+
+  $("#tab-login").click();
+  $("#auth-email").value = email;
+  $("#auth-password").value = "supersecret1";
+  $("#auth-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+  const reentered = await until(() => !$("#app-view").classList.contains("hidden"));
+  check("login round-trips after signing out",
+        reentered && Boolean(window.localStorage.getItem("aether_token")),
+        $("#auth-error")?.textContent || "");
+  check("the open conversation survives the login screen",
+        window.location.hash === "#conv-roundtrip", window.location.hash);
+  window.location.hash = "";
 
   check("no runtime errors during the live run", errors.length === 0, errors.join(" | "));
   console.log(failures.length ? `\n${failures.length} FAILED: ${failures.join(", ")}` : "\nall live checks passed");
