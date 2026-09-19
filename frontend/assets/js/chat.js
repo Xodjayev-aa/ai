@@ -160,8 +160,7 @@
       A.el("h2", { text: "What should we dig into?" }),
       A.el("p", {
         class: "muted",
-        text: "Free, keyless AI — answers stream in, and the free tier is shared "
-            + "so short waits are possible.",
+        text: "Free, keyless AI — chat, voice calls, images and presentations.",
       }),
     ]);
     const chips = [
@@ -348,7 +347,7 @@
               break;
             case "phase":
               if (event.phase === "queued") {
-                phase(event.detail || `Free AI is shared — about ${Math.round(event.wait_seconds)}s in the queue`, "queued");
+                phase(event.detail || `Free AI — about ${Math.round(event.wait_seconds)}s in the queue`, "queued");
               } else if (event.phase === "polish") {
                 phase("Second pass: polishing the answer…", "polish");
               } else if (event.phase === "research") {
@@ -358,7 +357,7 @@
               }
               break;
             case "ping":
-              if (!S.buffer) phase(`Still working — ${Math.round(event.elapsed)}s. Free shared AI can be slow.`, "wait");
+              if (!S.buffer) phase(`Still working — ${Math.round(event.elapsed)}s.`, "wait");
               break;
             case "delta":
               S.buffer += event.text;
@@ -470,7 +469,7 @@
     let left = seconds;
     const render = () => {
       node.textContent = left > 0
-        ? `Free AI is cooling down — retrying in ${A.formatCountdown(left)}`
+        ? `Free shared AI — retrying in ${A.formatCountdown(left)}`
         : "Retrying…";
     };
     render();

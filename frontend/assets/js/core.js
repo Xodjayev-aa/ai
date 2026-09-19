@@ -252,7 +252,7 @@ Aether.api = async function api(path, opts = {}) {
     if (err instanceof ApiError) throw err;
     if (err?.name === "AbortError") {
       if (signal?.aborted) throw err;               // caller cancelled — quiet
-      throw new ApiError("The request took too long. Free shared AI can be slow — try again.", { status: 408 });
+      throw new ApiError("The request took too long — try again.", { status: 408 });
     }
     throw new ApiError("You appear to be offline (or the server is unreachable).", { status: 0 });
   } finally {
