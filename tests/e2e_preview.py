@@ -530,10 +530,10 @@ def test_status(c: httpx.Client, base: str) -> None:
         detail = (f"mode={db.get('mode')} persistent={db.get('persistent')} "
                   f"warm={db.get('turso_warm')} "
                   f"recovery_active={db.get('recovery_active')} "
-                  f"schema={ (db.get('schema') or {}).get('ready') }")
+                  f"schema={ (db.get('schema') or {}).get('ready') } "
+                  f"warning={db.get('warning')!r} "
+                  f"turso_error={db.get('turso_error')!r}")
         if not db.get("persistent"):
-            detail += (f" warning={db.get('warning')!r} "
-                       f"turso_error={db.get('turso_error')!r}")
             R.warn("Turso database (DEGRADED — data on temporary storage)", detail)
         else:
             R.warn("Turso database (persistent)", detail)

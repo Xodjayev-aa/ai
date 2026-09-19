@@ -126,6 +126,37 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python tests/post_report.py "${{ github.event.pull_request.number || '' }}"
 
+      - name: Expose key results as annotations (log-independent)
+        # The full report also lands in the run log and (with an open PR) in
+        # the sticky comment; these annotations carry the headline numbers so
+        # a verification result stays readable even when the log itself is
+        # hard to download.
+        if: always()
+        continue-on-error: true
+        run: |
+          python - <<'PY'
+          import re
+
+          def line(pattern):
+              try:
+                  with open("e2e-report.md", encoding="utf8") as fh:
+                      for raw in fh:
+                          if re.search(pattern, raw):
+                              return raw.strip().replace("::", ": ")
+              except OSError:
+                  pass
+              return ""
+
+          for label, pattern in (
+              ("e2e app shell", r"app shell loads"),
+              ("e2e favicon.svg", r"favicon\.svg served as image/svg\+xml"),
+              ("e2e shell assets", r"every shell asset served"),
+              ("e2e turso health", r"Turso database"),
+          ):
+              print(f"::notice file=tests/e2e_preview.py::{label}: "
+                    f"{line(pattern) or 'not reported'}")
+          PY
+
       - name: Fail if the suite failed
         if: steps.suite.outputs.exit_code != '0'
         run: |
