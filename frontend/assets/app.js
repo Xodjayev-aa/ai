@@ -9,6 +9,33 @@ const API = {
   },
 };
 
+/* ─────────────── icons (stroke SVG, no emoji chrome) ─────────────── */
+const I = {
+  spark: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M12 3l2.1 5.6L20 12l-5.9 3.4L12 21l-2.1-5.6L4 12l5.9-3.4z"/></svg>',
+  user: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 19c1.5-2.9 3.9-4.4 6.5-4.4s5 1.5 6.5 4.4"/></svg>',
+  copy: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>',
+  vol: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M4 9.5v5h3.5L12 19V5L7.5 9.5zM15.5 9a4.2 4.2 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11"/></svg>',
+  pin: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M9 4h6l-.7 6.2 3.2 3.3H6.5l3.2-3.3z"/><path d="M12 13.5V20"/></svg>',
+  folder: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M3.5 7A1.5 1.5 0 0 1 5 5.5h4.5l2 2.5H19A1.5 1.5 0 0 1 20.5 9.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/></svg>',
+  link: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M10 14a4.5 4.5 0 0 0 6.4.4l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.5 1.5"/><path d="M14 10a4.5 4.5 0 0 0-6.4-.4l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.5-1.5"/></svg>',
+  down: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg>',
+  trash: '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M4.5 6.5h15M9.5 6V4.5h5V6M6.5 6.5l1 13h9l1-13M10 10.5v5M14 10.5v5"/></svg>',
+  check: '<svg class="ic" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  x: '<svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+};
+
+/* ─────────────── toasts (no alert chrome) ─────────────── */
+function toast(msg, type = "ok") {
+  const box = document.getElementById("toasts");
+  const el = document.createElement("div");
+  el.className = "toast " + type;
+  el.innerHTML = (type === "err" ? I.x : I.check) + "<span></span>";
+  el.querySelector("span").textContent = msg;
+  box.appendChild(el);
+  setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; }, 3200);
+  setTimeout(() => el.remove(), 3600);
+}
+
 /* ─────────────── tiny markdown renderer (XSS-safe) ─────────────── */
 function escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -17,9 +44,14 @@ function escapeHtml(s) {
 function renderMarkdown(src) {
   let text = escapeHtml(src);
   const blocks = [];
-  // fenced code blocks
   text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
-    blocks.push(`<pre><code class="lang">${code.replace(/\n$/, "")}</code></pre>`);
+    const clean = code.replace(/\n$/, "");
+    const label = escapeHtml(lang || "code");
+    blocks.push(
+      `<div class="codewrap"><div class="codehead"><span>${label}</span>` +
+      `<button class="code-copy" data-code="${encodeURIComponent(clean)}">` +
+      `${I.copy} COPY</button></div>` +
+      `<pre><code>${clean}</code></pre></div>`);
     return `\u0000${blocks.length - 1}\u0000`;
   });
   // inline code
@@ -132,14 +164,18 @@ async function loadStatus() {
     const resp = await fetch("/api/ai/status");
     const data = await resp.json();
     const n = data.providers_configured;
-    pill.textContent = data.database_mode === "turso" ? "☁️ Turso" : "💾 local DB";
+    pill.textContent = data.database_mode === "turso" ? "Turso" : "Local DB";
     pill.className = "pill " + (n > 0 ? "ok" : "warn");
     pill.title = `${n} AI provider(s) configured · DB: ${data.database_mode}\n` +
       (data.providers || []).map((p) =>
         `${p.name} (${p.key}): ${p.disabled ? "disabled" : p.cooling_down ? "cooling down" : "ready"}`
       ).join("\n") || "No providers configured";
-    if (n === 0) pill.textContent = "⚠️ no AI keys";
-  } catch { pill.textContent = "⚠️ offline"; pill.className = "pill warn"; }
+    if (n === 0) pill.textContent = "No AI keys";
+  } catch { pill.textContent = "Offline"; pill.className = "pill warn"; }
+}
+
+function setTitle(t) {
+  document.title = t && t !== "New chat" ? `${t} · Aether` : "Aether";
 }
 
 /* ─────────────── conversations ─────────────── */
@@ -153,14 +189,14 @@ async function loadConversations() {
     const div = document.createElement("div");
     div.className = "conv-item" + (c.id === currentConv ? " active" : "");
     div.innerHTML = `<span class="title"></span><span class="acts">
-      <button class="pin" title="Pin">${c.pinned ? "📌" : "📍"}</button>
-      <button class="fold" title="Folder">📁</button>
-      <button class="share" title="Share read-only link">🔗</button>
-      <button class="exp" title="Export .md">⬇</button>
-      <button class="del" title="Delete">🗑</button></span>`;
-    div.querySelector(".title").textContent = (c.pinned ? "📌 " : "") + c.title +
-      (c.folder ? `  · ${c.folder}` : "");
-    div.onclick = (e) => { if (!e.target.classList.contains("del") && !e.target.classList.contains("acts")) openConversation(c.id); };
+      <button class="pin" title="Pin">${I.pin}</button>
+      <button class="fold" title="Folder">${I.folder}</button>
+      <button class="share" title="Share read-only link">${I.link}</button>
+      <button class="exp" title="Export .md">${I.down}</button>
+      <button class="del danger" title="Delete">${I.trash}</button></span>`;
+    div.querySelector(".title").textContent = (c.pinned ? "· " : "") + c.title +
+      (c.folder ? `  (${c.folder})` : "");
+    div.onclick = () => openConversation(c.id);
     div.querySelector(".pin").onclick = (e) => { e.stopPropagation();
       fetch(`/api/conversations/${c.id}`, { method: "PATCH",
         headers: API.headers({ "Content-Type": "application/json" }),
@@ -175,9 +211,9 @@ async function loadConversations() {
     div.querySelector(".share").onclick = async (e) => { e.stopPropagation();
       const r = await fetch(`/api/conversations/${c.id}/share`, { method: "POST", headers: API.headers() });
       const d = await r.json();
-      if (!r.ok) return alert(d.detail || "Could not share");
+      if (!r.ok) return toast(d.detail || "Could not share", "err");
       const url = location.origin + d.path;
-      try { await navigator.clipboard.writeText(url); alert("🔗 Read-only link copied!\n" + url); }
+      try { await navigator.clipboard.writeText(url); toast("Read-only link copied"); }
       catch { prompt("Share this link:", url); } };
     div.querySelector(".exp").onclick = (e) => { e.stopPropagation();
       window.open(`/api/conversations/${c.id}/export?fmt=md`, "_blank"); };
@@ -218,13 +254,16 @@ $("#chat-search").addEventListener("input", (e) => {
 });
 function newChat() {
   currentConv = null;
-  $("#messages").innerHTML = `<div class="hero"><h2>What can I help with?</h2>
-    <p class="muted">Ask anything · use 🎤 to speak · answers draft with one AI and get polished by another when it counts</p></div>`;
+  setTitle("New chat");
+  $("#messages").innerHTML = `<div class="hero"><h2>What should we dig into?</h2>
+    <p class="muted">Ask anything — answers are drafted by one AI and polished by another when it counts.</p></div>`;
   document.querySelectorAll(".conv-item").forEach((el) => el.classList.remove("active"));
 }
 
 async function openConversation(id) {
   currentConv = id;
+  const c = conversations.find((x) => x.id === id);
+  setTitle(c ? c.title : "Chat");
   const resp = await fetch(`/api/conversations/${id}`, { headers: API.headers() });
   if (!resp.ok) return;
   const conv = await resp.json();
@@ -243,16 +282,21 @@ function appendMessage(role, content, meta = {}, live = false) {
   if (hero) hero.remove();
   const wrap = document.createElement("div");
   wrap.className = `msg ${role}`;
-  wrap.innerHTML = `
-    <div class="avatar">${role === "user" ? "🧑" : "✨"}</div>
-    <div class="bubble">
-      <div class="meta"><span>${role === "user" ? "You" : "Aether"}</span>
-        ${meta && meta.polished ? '<span class="badge polished">✨ polished</span>' : ""}
-        <span class="acts"></span></div>
-      <div class="content ${live ? "typing" : ""}"></div>
-    </div>`;
+  if (role === "user") {
+    wrap.innerHTML = `<div class="bubble"></div>`;
+  } else {
+    wrap.innerHTML = `
+      <div class="avatar">${I.spark}</div>
+      <div class="bubble">
+        <div class="meta"><span class="who">Aether</span>
+          ${meta && meta.polished ? '<span class="badge polished">Polished</span>' : ""}
+          <span class="acts"></span></div>
+        <div class="content"></div>
+      </div>`;
+  }
   const contentEl = wrap.querySelector(".content");
-  if (live) contentEl.textContent = content;
+  if (role === "user") contentEl.textContent = content;
+  else if (live) contentEl.innerHTML = content;
   else contentEl.innerHTML = renderMarkdown(content);
   if (role === "assistant" && !live) addAssistantActions(wrap, content);
   box.appendChild(wrap);
@@ -263,8 +307,8 @@ function appendMessage(role, content, meta = {}, live = false) {
 function addAssistantActions(wrap, rawText) {
   const acts = wrap.querySelector(".acts");
   acts.innerHTML = `
-    <button class="copy" title="Copy">📋</button>
-    <button class="speak" title="Read aloud">🔊</button>`;
+    <button class="copy" title="Copy">${I.copy}</button>
+    <button class="speak" title="Read aloud">${I.vol}</button>`;
   acts.querySelector(".copy").onclick = () => navigator.clipboard.writeText(rawText);
   acts.querySelector(".speak").onclick = (e) => speak(rawText, e.target);
 }
@@ -275,13 +319,29 @@ function scrollBottom(force) {
   if (nearBottom || force) box.scrollTop = box.scrollHeight;
 }
 
+document.querySelectorAll(".chip-sugg").forEach((b) => {
+  b.onclick = () => {
+    const input = $("#chat-input");
+    input.value = b.dataset.fill;
+    autoGrow(input);
+    input.focus();
+  };
+});
+
 /* ─────────────── answer mode: ai | research ─────────────── */
 let answerMode = "ai";
 function setMode(m) {
   answerMode = m;
   $("#mode-ai").classList.toggle("active", m === "ai");
   $("#mode-research").classList.toggle("active", m === "research");
-  $("#force-polish").parentElement.style.display = m === "research" ? "none" : "flex";
+  updateToolsDot();
+}
+function updateToolsDot() {
+  const dot = $("#tools-dot");
+  if (!dot) return;
+  const on = answerMode === "research" || $("#force-polish").checked ||
+             $("#reasoning-toggle").checked || !!$("#persona-select").value;
+  dot.classList.toggle("hidden", !on);
 }
 $("#mode-ai").onclick = () => setMode("ai");
 $("#mode-research").onclick = () => setMode("research");
@@ -300,6 +360,7 @@ async function sendMessage() {
 
   appendMessage("user", text);
   const { wrap, contentEl } = appendMessage("assistant", "", {}, true);
+  contentEl.innerHTML = '<span class="thinking"><i></i><i></i><i></i></span>';
   const phaseBar = $("#phase-bar");
   let buffer = "";
   let polished = false;
@@ -311,6 +372,7 @@ async function sendMessage() {
         body: JSON.stringify({ title: text.slice(0, 60) }),
       });
       currentConv = (await resp.json()).id;
+      setTitle(text.slice(0, 48));
       loadConversations();
     }
     const resp = await fetch("/api/chat/stream", {
@@ -348,16 +410,19 @@ async function sendMessage() {
         if (payload === "[DONE]") break outer;
         let ev; try { ev = JSON.parse(payload); } catch { continue; }
         if (ev.type === "phase") {
-          phaseBar.textContent = ev.phase === "polish"
-            ? "✨ Second AI is polishing the answer…"
+          const label = ev.phase === "polish"
+            ? "Second AI is polishing the answer"
             : ev.phase === "research"
-            ? "📚 Searching Wikipedia & DuckDuckGo…"
-            : "⚡ Drafting…";
+            ? "Searching Wikipedia & DuckDuckGo"
+            : "Drafting";
+          phaseBar.innerHTML = '<span class="spin"></span><span></span>';
+          phaseBar.querySelector("span:last-child").textContent = label + "…";
           phaseBar.classList.remove("hidden");
           if (ev.phase === "polish") { buffer = ""; polished = true; }
         } else if (ev.type === "delta") {
           buffer += ev.text;
-          contentEl.innerHTML = renderMarkdown(buffer) + '<span class="typing"></span>';
+          contentEl.innerHTML = renderMarkdown(buffer);
+          contentEl.classList.add("cursor-blink");
           scrollBottom();
         } else if (ev.type === "final") {
           buffer = ev.text; polished = ev.polished;
@@ -368,15 +433,15 @@ async function sendMessage() {
         }
       }
     }
-    contentEl.classList.remove("typing");
+    contentEl.classList.remove("cursor-blink");
     contentEl.innerHTML = renderMarkdown(buffer);
     addAssistantActions(wrap, buffer);
     const metaEl = wrap.querySelector(".meta");
     if (polished && !metaEl.querySelector(".badge"))
-      metaEl.insertAdjacentHTML("afterbegin", '<span class="badge polished">✨ polished</span>');
+      metaEl.insertAdjacentHTML("afterbegin", '<span class="badge polished">Polished</span>');
   } catch (err) {
-    contentEl.classList.remove("typing");
-    contentEl.innerHTML = `<p style="color:var(--err)">⚠️ ${escapeHtml(err.message || "Something went wrong")}</p>`;
+    contentEl.classList.remove("cursor-blink");
+    contentEl.innerHTML = `<p style="color:var(--err)">${escapeHtml(err.message || "Something went wrong")}</p>`;
   } finally {
     phaseBar.classList.add("hidden");
     streaming = false;
@@ -405,6 +470,7 @@ $("#mic-btn").onclick = async () => {
     mediaRecorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
     chunks = [];
     mediaRecorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    const micOriginal = $("#mic-btn").innerHTML;
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
       $("#mic-btn").classList.remove("recording");
@@ -413,11 +479,12 @@ $("#mic-btn").onclick = async () => {
     };
     mediaRecorder.start();
     $("#mic-btn").classList.add("recording");
-  } catch { alert("Microphone permission denied."); }
+  } catch { toast("Microphone permission denied.", "err"); }
 };
 async function transcribeBlob(blob) {
   const btn = $("#mic-btn");
-  btn.textContent = "⏳";
+  const original = btn.innerHTML;
+  btn.innerHTML = "…";
   try {
     const form = new FormData();
     form.append("file", blob, "speech.webm");
@@ -434,11 +501,11 @@ async function transcribeBlob(blob) {
       // Server STT unavailable -> keyless browser speech recognition.
       browserSTT();
     }
-  } finally { btn.textContent = "🎤"; }
+  } finally { btn.innerHTML = original; }
 }
 function browserSTT() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { alert("Voice input needs a server STT key or a Chromium browser."); return; }
+  if (!SR) { toast("Voice input needs a server STT key or a Chromium browser.", "err"); return; }
   const rec = new SR();
   rec.lang = navigator.language || "en-US";
   rec.interimResults = false;
@@ -450,7 +517,7 @@ function browserSTT() {
     autoGrow(input);
     input.focus();
   };
-  rec.onerror = () => alert("Browser speech recognition failed.");
+  rec.onerror = () => toast("Browser speech recognition failed.", "err");
   rec.start();
 }
 
@@ -459,7 +526,8 @@ let currentAudio = null;
 async function speak(text, btn) {
   if (currentAudio) { currentAudio.pause(); currentAudio = null; }
   if (window.speechSynthesis) window.speechSynthesis.cancel();
-  btn.textContent = "⏳";
+  const original = btn.innerHTML;
+  btn.innerHTML = "…";
   const clean = stripMarkdown(text).slice(0, 800);
   try {
     const resp = await fetch("/api/voice/tts", {
@@ -469,8 +537,8 @@ async function speak(text, btn) {
     if (resp.ok) {
       const blob = await resp.blob();
       currentAudio = new Audio(URL.createObjectURL(blob));
-      currentAudio.onended = () => (btn.textContent = "🔊");
-      currentAudio.onerror = () => { browserSpeak(clean, btn); };
+      currentAudio.onended = () => (btn.innerHTML = original);
+      currentAudio.onerror = () => { browserSpeak(clean, btn, original); };
       btn.textContent = "⏸";
       currentAudio.play();
       return;
@@ -478,11 +546,11 @@ async function speak(text, btn) {
   } catch { /* fall through to browser TTS */ }
   browserSpeak(clean, btn);
 }
-function browserSpeak(text, btn) {
-  if (!window.speechSynthesis) { btn.textContent = "🔊"; return; }
+function browserSpeak(text, btn, original) {
+  if (!window.speechSynthesis) { btn.innerHTML = original || I.vol; return; }
   const u = new SpeechSynthesisUtterance(text);
   u.rate = 1.02;
-  u.onend = () => (btn.textContent = "🔊");
+  u.onend = () => (btn.innerHTML = original || I.vol);
   window.speechSynthesis.speak(u);
   btn.textContent = "⏸";
 }
@@ -507,12 +575,12 @@ $("#image-go").onclick = async () => {
     if (!resp.ok) throw new Error(data.detail || "Generation failed");
     const img = card.querySelector("img");
     img.onload = () => (card.querySelector(".cap span").textContent = prompt.slice(0, 80));
-    img.onerror = () => (card.querySelector(".cap span").textContent = "⚠️ failed to load — try again");
+    img.onerror = () => (card.querySelector(".cap span").textContent = "Failed to load — try again");
     img.src = data.url;
     card.querySelector(".cap").insertAdjacentHTML("beforeend",
       `<a href="${data.url}" download target="_blank" rel="noopener">open ⬈</a>`);
   } catch (err) {
-    card.querySelector(".cap span").textContent = `⚠️ ${err.message}`;
+    card.querySelector(".cap span").textContent = err.message;
   }
 };
 
@@ -524,7 +592,7 @@ $("#slide-go").onclick = async () => {
   if (!topic) return;
   const status = $("#slide-status");
   status.classList.remove("hidden");
-  status.textContent = "🧠 AI is writing your deck…";
+  status.textContent = "AI is writing your deck…";
   try {
     const resp = await fetch("/api/presentations/generate", {
       method: "POST", headers: API.headers({ "Content-Type": "application/json" }),
@@ -536,9 +604,9 @@ $("#slide-go").onclick = async () => {
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || "Could not build deck");
     currentDeck = data;
-    status.textContent = `✅ “${data.title}” — ${data.slides.length} slides ready`;
+    status.textContent = `“${data.title}” — ${data.slides.length} slides ready`;
     openDeck(data);
-  } catch (err) { status.textContent = `⚠️ ${err.message}`; }
+  } catch (err) { status.textContent = err.message; }
 };
 
 function openDeck(deck) {
@@ -557,7 +625,7 @@ function renderSlide() {
     ? `<h3>${escapeHtml(deck.title)}</h3><p style="opacity:.7">${escapeHtml(deck.subtitle || "")}</p>`
     : `<h3>${escapeHtml(s.title)}</h3>
        <ul>${(s.bullets || []).map((b) => `<li>${escapeHtml(b)}</li>`).join("")}</ul>
-       ${s.notes ? `<div class="slide-notes">🗒 ${escapeHtml(s.notes)}</div>` : ""}`;
+       ${s.notes ? `<div class="slide-notes">${escapeHtml(s.notes)}</div>` : ""}`;
   $("#slide-counter").textContent = i === -1 ? `Title · ${deck.slides.length + 1} slides`
     : `${i + 1} / ${deck.slides.length}`;
 }
@@ -586,7 +654,7 @@ $("#deck-pptx").onclick = async () => {
     a.download = (currentDeck.title || "presentation").replace(/[^\w\- ]+/g, "").trim() + ".pptx";
     a.click();
     URL.revokeObjectURL(a.href);
-  } catch (err) { alert(err.message); }
+  } catch (err) { toast(err.message, "err"); }
   finally { btn.textContent = "⬇ Export .pptx"; }
 };
 
@@ -606,8 +674,8 @@ $("#deck-html").onclick = async () => {
     a.download = (currentDeck.title || "presentation").replace(/[^\w\- ]+/g, "").trim() + "-deck.html";
     a.click();
     URL.revokeObjectURL(a.href);
-  } catch (err) { alert(err.message); }
-  finally { btn.textContent = "🌐 HTML deck"; }
+  } catch (err) { toast(err.message, "err"); }
+  finally { btn.textContent = "HTML deck"; }
 };
 
 
@@ -637,7 +705,7 @@ $("#password-form").onsubmit = async (e) => {
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok) throw new Error(data.detail || "Could not update password");
     $("#password-modal").classList.add("hidden");
-    alert("✅ Password updated.");
+    toast("Password updated");
   } catch (ex) {
     err.textContent = ex.message;
     err.classList.remove("hidden");
@@ -657,7 +725,7 @@ async function loadSettings() {
     $("#auto-memory").checked = !!mem.auto;
     $("#memory-list").innerHTML = (mem.memories || []).map((m) =>
       `<div class="mem-row"><span>${escapeHtml(m.content)}</span>
-       <button data-id="${m.id}" class="mem-del">✕</button></div>`).join("")
+       <button data-id="${m.id}" class="mem-del">${I.x}</button></div>`).join("")
       || '<p class="muted small-text">No memories yet — chat and they will appear.</p>';
     $("#memory-list").querySelectorAll(".mem-del").forEach((b) => {
       b.onclick = () => fetch("/api/settings/memory/" + b.dataset.id,
@@ -669,21 +737,21 @@ async function loadSettings() {
 function renderPersonas(list) {
   $("#persona-list").innerHTML = list.map((p) =>
     `<div class="mem-row"><span><b>${escapeHtml(p.name)}</b> — <span class="muted">${escapeHtml(p.prompt.slice(0, 80))}…</span></span>
-     <button data-id="${p.id}" class="per-del">✕</button></div>`).join("")
+     <button data-id="${p.id}" class="per-del">${I.x}</button></div>`).join("")
     || '<p class="muted small-text">No personas yet.</p>';
   $("#persona-list").querySelectorAll(".per-del").forEach((b) => {
     b.onclick = () => fetch("/api/settings/personas/" + b.dataset.id,
       { method: "DELETE", headers: API.headers() }).then(loadSettings);
   });
   const sel = $("#persona-select");
-  sel.innerHTML = '<option value="">🎭 Persona</option>' +
+  sel.innerHTML = '<option value="">Persona</option>' +
     list.map((p) => `<option value="${p.id}">${escapeHtml(p.name)}</option>`).join("");
 }
 $("#instructions-save").onclick = async () => {
   const r = await fetch("/api/settings/instructions", { method: "PUT",
     headers: API.headers({ "Content-Type": "application/json" }),
     body: JSON.stringify({ text: $("#instructions").value }) });
-  alert(r.ok ? "✅ Saved." : "Could not save.");
+  r.ok ? toast("Instructions saved") : toast("Could not save.", "err");
 };
 $("#auto-memory").onchange = async (e) => {
   await fetch("/api/settings/memory/auto", { method: "PUT",
@@ -692,12 +760,13 @@ $("#auto-memory").onchange = async (e) => {
 };
 $("#persona-add").onclick = async () => {
   const name = $("#persona-name").value.trim(), prompt = $("#persona-prompt").value.trim();
-  if (!name || !prompt) return alert("Name and prompt are required.");
+  if (!name || !prompt) return toast("Name and prompt are required.", "err");
   const r = await fetch("/api/settings/personas", { method: "POST",
     headers: API.headers({ "Content-Type": "application/json" }),
     body: JSON.stringify({ name, prompt }) });
-  if (!r.ok) return alert((await r.json().catch(() => ({}))).detail || "Failed");
+  if (!r.ok) return toast((await r.json().catch(() => ({}))).detail || "Failed", "err");
   $("#persona-name").value = ""; $("#persona-prompt").value = "";
+  toast("Persona added");
   loadSettings();
 };
 $("#export-all").onclick = () => window.open("/api/settings/export", "_blank");
@@ -718,7 +787,7 @@ $("#news-go").onclick = async () => {
        ${escapeHtml(n.title)}</a><span class="muted small-text">${escapeHtml(n.source)} · ${escapeHtml(n.published)}</span></div>`).join("")
       || '<p class="muted" style="padding:0 18px">No items.</p>';
   } catch (err) {
-    box.innerHTML = `<p class="muted" style="padding:0 18px">⚠️ ${escapeHtml(err.message)}</p>`;
+    box.innerHTML = `<p class="muted" style="padding:0 18px">${escapeHtml(err.message)}</p>`;
   }
 };
 
@@ -737,7 +806,7 @@ async function loadTasks() {
   $("#task-list").innerHTML = tasks.map((t) =>
     `<div class="mem-row"><span><b>${escapeHtml(t.prompt.slice(0, 60))}</b>
      <br><span class="muted small-text">daily at ${String(t.hour_utc).padStart(2, "0")}:00 UTC · ${t.last_run ? "last run " + t.last_run : "not run yet"}</span></span>
-     <button data-id="${t.id}" class="task-del">✕</button></div>`).join("")
+     <button data-id="${t.id}" class="task-del">${I.x}</button></div>`).join("")
     || '<p class="muted small-text">No tasks yet.</p>';
   $("#task-list").querySelectorAll(".task-del").forEach((b) => {
     b.onclick = () => fetch("/api/tasks/" + b.dataset.id,
@@ -750,8 +819,9 @@ $("#task-add").onclick = async () => {
   const r = await fetch("/api/tasks", { method: "POST",
     headers: API.headers({ "Content-Type": "application/json" }),
     body: JSON.stringify({ prompt, hour_utc: Number(hourSel.value) }) });
-  if (!r.ok) return alert((await r.json().catch(() => ({}))).detail || "Failed");
+  if (!r.ok) return toast((await r.json().catch(() => ({}))).detail || "Failed", "err");
   $("#task-prompt").value = "";
+  toast("Task scheduled");
   loadTasks();
 };
 
@@ -761,15 +831,15 @@ let attachedImage = null; // dataURL
 function renderChips() {
   const box = $("#attachments");
   const chips = [];
-  if (attachedDoc) chips.push(`<span class="chip">📎 ${escapeHtml(attachedDoc.name)} <button data-k="doc">✕</button></span>`);
-  if (attachedImage) chips.push(`<span class="chip">📷 image <button data-k="img">✕</button></span>`);
+  if (attachedDoc) chips.push(`<span class="chip">PDF · ${escapeHtml(attachedDoc.name)} <button data-k="doc">${I.x}</button></span>`);
+  if (attachedImage) chips.push(`<span class="chip">Image <button data-k="img">${I.x}</button></span>`);
   box.innerHTML = chips.join("");
   box.classList.toggle("hidden", !chips.length);
   box.querySelector('[data-k="doc"]')?.addEventListener("click", () => { attachedDoc = null; renderChips(); });
   box.querySelector('[data-k="img"]')?.addEventListener("click", () => { attachedImage = null; renderChips(); });
 }
-$("#attach-btn").onclick = () => $("#pdf-input").click();
-$("#image-attach-btn").onclick = () => $("#image-input").click();
+$("#tool-pdf").onclick = () => { $("#tools-menu").classList.add("hidden"); $("#pdf-input").click(); };
+$("#tool-image").onclick = () => { $("#tools-menu").classList.add("hidden"); $("#image-input").click(); };
 $("#pdf-input").onchange = async (e) => {
   const f = e.target.files[0];
   if (!f) return;
@@ -777,7 +847,7 @@ $("#pdf-input").onchange = async (e) => {
   form.append("file", f);
   const r = await fetch("/api/files/extract-pdf", { method: "POST", headers: API.headers(), body: form });
   const d = await r.json().catch(() => ({}));
-  if (!r.ok) return alert(d.detail || "Could not read PDF");
+  if (!r.ok) return toast(d.detail || "Could not read PDF", "err");
   attachedDoc = { doc_id: d.doc_id, name: d.name };
   renderChips();
   e.target.value = "";
@@ -785,7 +855,7 @@ $("#pdf-input").onchange = async (e) => {
 $("#image-input").onchange = (e) => {
   const f = e.target.files[0];
   if (!f) return;
-  if (f.size > 4 * 1024 * 1024) return alert("Image too large (max 4 MB)");
+  if (f.size > 4 * 1024 * 1024) return toast("Image too large (max 4 MB)", "err");
   const reader = new FileReader();
   reader.onload = () => { attachedImage = reader.result; renderChips(); };
   reader.readAsDataURL(f);
@@ -812,14 +882,28 @@ function closeSidebar() {
   $("#sidebar").classList.remove("open");
   $("#scrim").classList.remove("show");
 }
+const isMobile = () => window.matchMedia("(max-width: 860px)").matches;
 $("#menu-btn").onclick = () => {
-  $("#sidebar").classList.toggle("open");
-  $("#scrim").classList.toggle("show");
+  if (isMobile()) {
+    $("#sidebar").classList.add("open");
+    $("#scrim").classList.add("show");
+  } else {
+    $("#app-view").classList.toggle("sb-collapsed");
+  }
+};
+$("#sb-close").onclick = () => {
+  if (isMobile()) closeSidebar();
+  else $("#app-view").classList.add("sb-collapsed");
 };
 $("#scrim").onclick = closeSidebar;
 $("#user-btn").onclick = () => {
-  const s = $("#sidebar");
-  s.classList.add("open"); $("#scrim").classList.add("show");
+  if (isMobile() || $("#app-view").classList.contains("sb-collapsed")) {
+    if (isMobile()) { $("#sidebar").classList.add("open"); $("#scrim").classList.add("show"); }
+    else $("#app-view").classList.remove("sb-collapsed");
+  } else {
+    showPane("settings");
+    if (typeof loadSettings === "function") loadSettings();
+  }
 };
 function logout401() {
   localStorage.removeItem("aether_token");
@@ -827,7 +911,49 @@ function logout401() {
   location.reload();
 }
 
+document.getElementById("messages").addEventListener("click", async (e) => {
+  const btn = e.target.closest(".code-copy");
+  if (!btn) return;
+  try {
+    await navigator.clipboard.writeText(decodeURIComponent(btn.dataset.code));
+    btn.textContent = "COPIED";
+    setTimeout(() => { btn.innerHTML = I.copy + " COPY"; }, 1400);
+  } catch {}
+});
+
+/* ─────────────── nav: chat + tools menu ─────────────── */
+$("#nav-chat").onclick = () => { showPane("chat"); closeSidebar(); };
+$("#tools-btn").onclick = (e) => {
+  e.stopPropagation();
+  $("#tools-menu").classList.toggle("hidden");
+};
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".tools-anchor")) $("#tools-menu").classList.add("hidden");
+});
+function syncSwitch(swId, inputId) {
+  document.getElementById(swId).classList.toggle("on",
+    document.getElementById(inputId).checked);
+}
+$("#tool-deep").onclick = () => {
+  const cb = $("#force-polish");
+  cb.checked = !cb.checked;
+  syncSwitch("sw-deep", "force-polish");
+  updateToolsDot();
+};
+$("#tool-reason").onclick = () => {
+  const cb = $("#reasoning-toggle");
+  cb.checked = !cb.checked;
+  syncSwitch("sw-reason", "reasoning-toggle");
+  updateToolsDot();
+};
+$("#persona-select").addEventListener("change", updateToolsDot);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") $("#tools-menu").classList.add("hidden");
+});
+
 /* ─────────────── boot ─────────────── */
+syncSwitch("sw-deep", "force-polish");
+syncSwitch("sw-reason", "reasoning-toggle");
 function showOffline() {
   $("#auth-view").classList.remove("hidden");
   $("#retry-btn").classList.remove("hidden");
@@ -862,7 +988,7 @@ async function loadAdmin() {
     if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || "Admin only");
     renderAdmin(await resp.json());
   } catch (err) {
-    body.innerHTML = '<p class="muted" style="padding:20px">⚠️ ' + escapeHtml(err.message) + '</p>';
+    body.innerHTML = '<p class="muted" style="padding:20px">' + escapeHtml(err.message) + '</p>';
   }
 }
 function renderAdmin(data) {

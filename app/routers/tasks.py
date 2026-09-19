@@ -31,7 +31,7 @@ class TaskBody(BaseModel):
 def create(user=Depends(get_current_user), body: TaskBody = None):
     if len(list_tasks(user["id"])) >= 10:
         raise HTTPException(status_code=400, detail="Task limit reached (10).")
-    conv = create_conversation(user["id"], f"⏰ {body.prompt[:60]}")
+    conv = create_conversation(user["id"], f"Daily · {body.prompt[:52]}")
     task = create_task(user["id"], conv["id"], body.prompt, body.hour_utc)
     return task
 
