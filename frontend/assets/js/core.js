@@ -604,7 +604,10 @@ Aether.theme = {
 
 Aether.icon = function icon(name, size = 16) {
   const paths = {
-    logo: '<path d="M12 3c.9 4.6 4.4 8.1 9 9-4.6.9-8.1 4.4-9 9-.9-4.6-4.4-8.1-9-9 4.6-.9 8.1-4.4 9-9z"/>',
+    // The rounded-A monogram (same two paths as icons/favicon.svg, no plate
+    // rect — the colour comes from the caller's `color`, stroke from currentColor).
+    logo: '<path d="M5.4 19.8 12 4.2l6.6 15.6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>'
+      + '<path d="M8.1 14.6h7.8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>',
     chat: '<path d="M20.5 11.5a8 8 0 1 1-3.4-6.5L20.5 4l-1 3.6a8 8 0 0 1 1 3.9z"/>',
     phone: '<path d="M6.5 3.5h3l1.5 4-2 1.4a11 11 0 0 0 6.1 6.1l1.4-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2z"/>',
     image: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 17l4.8-4.6 3.4 3.2 2.8-2.6 4 3.8"/>',
