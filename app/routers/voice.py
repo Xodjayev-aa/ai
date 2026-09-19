@@ -2,10 +2,14 @@
 
 Speech-to-text:  Groq Whisper → Gemini (native audio) → 503, in which case the
                  browser's own recognition is used (keyless).
-Text-to-speech:  Pollinations openai-audio (keyless neural voices, the
-                 default chain) → Groq PlayAI → Gemini TTS → 503
+Text-to-speech:  HD Edge neural voices (keyless, ~140 languages) → keyless
+                 Pollinations openai-audio → optional keyed providers → 503
                  {browser_tts: true} so the client falls back to the browser's
                  *neural* voices (never a robotic default).
+
+Every route in the chain is free and keyless. The HD service is unofficial and
+can change, so it runs behind a timeout + circuit breaker and any failure simply
+moves down the chain — a voice call must never break.
 
 Voice mode ("call mode") is built on top of this: the client splits its reply
 into sentences and asks for them one at a time, so the first sound starts
@@ -18,10 +22,15 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from app.ai import config, gemini, keyless
+from app.ai import tts_hd
 from app.database import bump_usage
 from app.deps import get_current_user
 
 router = APIRouter(prefix="/api/voice", tags=["voice"])
+
+# One HDTTS instance per process: it owns the voice catalogue cache, the
+# failure streak and the circuit breaker state.
+hd_tts = tts_hd.HDTTS()
 
 ALLOWED_AUDIO = {
     "audio/webm", "audio/ogg", "audio/mpeg", "audio/mp3", "audio/mp4",
@@ -93,8 +102,23 @@ async def transcribe(file: UploadFile, user=Depends(get_current_user)):
 
 class TTSBody(BaseModel):
     text: str = Field(min_length=1, max_length=1200)
-    voice: str = Field(default=keyless.DEFAULT_VOICE, max_length=32)
+    # Either a short id ("nova") or an Edge ShortName ("uz-UZ-SardorNeural").
+    voice: str = Field(default=keyless.DEFAULT_VOICE, max_length=64)
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    # auto = HD → legacy → browser; hd = prefer HD, then fall through the chain;
+    # browser = skip the servers entirely (Settings → HD voices off).
+    provider: str = Field(default="auto", pattern="^(auto|hd|browser)$")
+
+
+def _is_hd_voice(voice: str) -> bool:
+    """Edge ShortNames look like 'uz-UZ-SardorNeural' — never a bare 'nova'."""
+    return "-" in voice and voice.lower().endswith("neural")
+
+
+def _hd_rate(speed: float) -> str:
+    """Speed multiplier → Edge's '+10%' / '-15%' rate syntax."""
+    percent = round((max(0.5, min(2.0, speed)) - 1.0) * 100)
+    return f"{percent:+d}%"
 
 
 async def _tts_groq(text: str, voice: str) -> bytes:
@@ -111,8 +135,13 @@ async def _tts_groq(text: str, voice: str) -> bytes:
 
 
 @router.get("/voices")
-def voices():
-    """The voices the call UI can offer, plus the browser fallback contract."""
+async def voices(refresh: bool = False):
+    """The voices the call UI can offer, plus the browser fallback contract.
+
+    ``hd`` carries the HD Edge catalogue (~140 languages) with a popular-first
+    language list, so Settings can filter without shipping a static list.
+    """
+    hd_catalog = await hd_tts.voices(force=refresh)
     return {
         "engine": "pollinations-openai-audio",
         "keyless": True,
@@ -123,6 +152,15 @@ def voices():
         "note": "Free shared voice servers can have short waits. If they are "
                 "busy, Aether switches to your device's best neural voice.",
         "queue": keyless.tts_pacer.snapshot(),
+        "hd": {
+            "enabled": bool(hd_tts.enabled),
+            "default_voice": tts_hd.DEFAULT_VOICE,
+            "provider": "edge-neural",
+            "languages": await hd_tts.languages(),
+            "voices": hd_catalog,
+            "note": "HD neural voices are free and keyless; if the service is "
+                    "busy Aether automatically uses the backup voice.",
+        },
     }
 
 
@@ -130,28 +168,65 @@ def voices():
 async def text_to_speech(body: TTSBody, user=Depends(get_current_user)):
     """Return spoken audio for one short chunk (a sentence or two).
 
-    The voice call UI deliberately sends *sentences*, not whole answers.
+    The voice call UI deliberately sends *sentences*, not whole answers, so the
+    first sound starts within a second or two.
+
+    Chain: HD Edge neural → keyless Pollinations → keyed (if configured) →
+    503 {browser_tts: true}. ``X-Aether-TTS`` reports which link answered.
     """
     text = body.text.strip()[:config.MAX_TTS_CHARS]
     if not text:
         raise HTTPException(status_code=400, detail="No text to speak")
 
-    # (a) Keyless Pollinations neural voices — the primary, human-sounding route.
+    last_error = ""
+    retry_after = None
+
+    # (0) Explicit browser-only request (Settings → HD off). The client asked for
+    #     its own voices, so answer 503 {browser_tts} without touching a server.
+    if body.provider == "browser":
+        return JSONResponse(status_code=503, headers={"Retry-After": "2"}, content={
+            "detail": {"message": "Browser voices requested.",
+                       "browser_tts": True, "retry_after": 0},
+        })
+
+    # (a) HD Edge neural voices — ~140 languages, best quality, keyless. Routed
+    #     through the shared TTS pacer so a burst of sentences stays polite.
+    if body.provider != "browser" and _is_hd_voice(body.voice):
+        try:
+            await keyless.tts_pacer.acquire()
+        except Exception:
+            pass                     # never block the chain on pacing
+        audio = await hd_tts.synthesize(
+            text,
+            voice=body.voice or tts_hd.DEFAULT_VOICE,
+            rate=_hd_rate(body.speed),
+        )
+        if audio:
+            keyless.tts_pacer.success()
+            return Response(content=audio, media_type="audio/mpeg", headers={
+                "Cache-Control": "no-store",
+                "X-Voice": body.voice,
+                "X-Aether-TTS": "hd",
+                "X-Voice-Engine": "edge-neural",
+            })
+
+    # (b) Keyless Pollinations neural voices — the backup, still keyless.
     try:
         mp3 = await keyless.tts_audio(text, body.voice)
         if mp3:
             return Response(content=mp3, media_type="audio/mpeg", headers={
                 "Cache-Control": "no-store",
                 "X-Voice": keyless.normalize_voice(body.voice),
+                "X-Aether-TTS": "legacy",
                 "X-Voice-Engine": "pollinations",
             })
     except keyless.KeylessError as exc:
         last_error = str(exc)
         retry_after = exc.retry_after
-    else:
-        last_error, retry_after = "", None
+    except Exception as exc:  # noqa: BLE001 — a busy backup must not 500 a call
+        last_error = f"backup voice unavailable ({type(exc).__name__})"
 
-    # (b) Optional keyed providers, only if someone configured keys.
+    # (c) Optional keyed providers, only if someone configured keys.
     for method, available in ((_tts_groq, bool(config.GROQ_API_KEY)),
                               (gemini.tts, bool(config.GEMINI_API_KEY))):
         if not available:
@@ -161,12 +236,13 @@ async def text_to_speech(body: TTSBody, user=Depends(get_current_user)):
                 else await method(text)
             if wav:
                 return Response(content=wav, media_type="audio/wav", headers={
-                    "Cache-Control": "no-store", "X-Voice-Engine": "keyed",
+                    "Cache-Control": "no-store", "X-Aether-TTS": "legacy",
+                    "X-Voice-Engine": "keyed",
                 })
         except gemini.GeminiSpeechError:
             continue
 
-    # (c) Browser neural voices take over (the client filters for Natural/
+    # (d) Browser neural voices take over (the client filters for Natural/
     #     Neural/Google/Samantha-class voices).
     headers = {"Retry-After": str(int(max(2, retry_after or 5)))}
     return JSONResponse(status_code=503, headers=headers, content={

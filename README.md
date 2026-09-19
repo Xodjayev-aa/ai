@@ -17,7 +17,9 @@ an honest cooldown counter. The UI says so — no "unlimited" promises.
 | Feature | How it works |
 |---|---|
 | 💬 Chat | SSE streaming with keep-alive pings, phase labels, stop-keeps-partial, regenerate, edit & resend, follow-up chips, code cards with copy buttons |
-| 🔊 **Voice calls** | Full-screen call mode: sentence-by-sentence TTS (keyless first, then neural browser voices), continuous listening with silence auto-send, barge-in, live captions, mute |
+| 🔊 **Voice calls** | Full-screen call mode with HD neural voices (~140 languages incl. Uzbek), sentence-by-sentence TTS so the first sound is fast, continuous listening with silence auto-send, barge-in, live captions, mute. Fallback chain: HD → backup voice → your device's voices |
+| 🎓 **Speaking exams** | Optional examiner mode in the call: IELTS / CEFR B1 / CEFR B2 / school / your own topic — one question at a time, a short tip after each answer, then a feedback card with an estimated band, three strengths and three concrete fixes |
+| 💬 **Language & tone** | Reply in your language (auto or picked), family-friendly by default, and a "strong language" switch for realistic mature dialogue when *you* turn it on |
 | 📊 Presentations | Incremental build (outline → slide by slide) with per-slide retry/resume, in-app viewer, `.pptx` **and** standalone HTML export |
 | 🖼️ Images | Aspect-ratio picker, download, regenerate, prompt history |
 | 🧠 Teach Mode | A 5-question interview plus "Teach Aether" on any answer; memories are editable and injected into future prompts |
@@ -71,6 +73,7 @@ POST /api/voice/transcribe             (503 => use browser speech recognition)
 POST /api/teach/{start,answer,finish,improve}
 GET  /api/usage                        GET /api/ai/status      GET /api/health
 GET  /api/settings/{instructions,memory,personas,export}
+GET/PUT /api/settings/prefs            (voice, language, strong-language, exam)
 GET  /api/admin/{overview,users,conversations,info}
 ```
 
@@ -81,15 +84,16 @@ providers, nothing else):
 
 ```bash
 rm -f /tmp/aether-test.db && .venv/bin/python tests/test_offline.py   # 43 backend checks
-node tests/frontend-smoke.mjs                                       # 51 jsdom checks
+.venv/bin/python -m pytest tests/test_hd_tts.py -q                  # 8 HD-voice unit checks
+node tests/frontend-smoke.mjs                                       # 73 jsdom checks
 
 # real HTTP against a real server + database
 DATABASE_URL=/tmp/aether-preview.db .venv/bin/python -m uvicorn app.main:app --port 8000 &
-AETHER_BASE=http://127.0.0.1:8000 node tests/frontend-live.mjs       # 30 checks
+AETHER_BASE=http://127.0.0.1:8000 node tests/frontend-live.mjs       # 37 checks
 
 # happy paths (streaming, decks, exports, voice) with the free tier stubbed
 AETHER_MOCK_PORT=8001 .venv/bin/python tests/mock_server.py &
-AETHER_BASE=http://127.0.0.1:8001 node tests/frontend-e2e.mjs        # 36 checks
+AETHER_BASE=http://127.0.0.1:8001 node tests/frontend-e2e.mjs        # 56 checks
 ```
 
 `tests/e2e_preview.py` is the CI suite: it tests a deployment (or a local boot)

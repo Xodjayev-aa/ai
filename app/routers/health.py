@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.ai import client, config, keyless
+from app.routers.voice import hd_tts
 from app.ai.rotator import pool
 from app.db.engine import status as db_status
 from app.database import count_users
@@ -34,6 +35,7 @@ async def ai_status():
         "version": VERSION,
         "database_mode": db_status()["mode"],
         "security": secret_status(),
+        "hd_tts": hd_tts.status(),
         "database": db_status(),
         "providers_configured": len(providers),
         "providers": providers,

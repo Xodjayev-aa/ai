@@ -264,6 +264,24 @@ def get_auto_memory(user_id: int) -> bool:
     return bool(rows[0].get("auto_memory", 1)) if rows else False
 
 
+def get_prefs(user_id: int) -> dict:
+    """Every user preference, normalised (never raises on a junk row)."""
+    from app.preferences import normalize
+    rows = query("SELECT prefs FROM users WHERE id = ?", (user_id,))
+    raw = rows[0].get("prefs") if rows else None
+    return normalize(raw)
+
+
+def set_prefs(user_id: int, patch: dict) -> dict:
+    """Merge a partial update into the stored prefs and return the result."""
+    from app.preferences import merge
+    updated = merge(get_prefs(user_id), patch or {})
+    import json as _json
+    execute("UPDATE users SET prefs = ? WHERE id = ?",
+            (_json.dumps(updated), user_id))
+    return updated
+
+
 def add_memory(user_id: int, content: str) -> None:
     content = content.strip()[:300]
     if not content:

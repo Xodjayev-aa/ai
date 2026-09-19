@@ -7,18 +7,22 @@
   const A = window.Aether;
   const { $ } = A;
 
-  const S = { memories: [], personas: [], usage: null, voices: [], teach: null };
+  const S = {
+    memories: [], personas: [], usage: null, voices: [], teach: null,
+    hd: null, hdVoices: [], hdLanguages: [], prefs: null,
+  };
 
   /* ─────────────────────────── load / render ──────────────────────── */
 
   A.loadSettings = async function loadSettings() {
     try {
-      const [instructions, memory, personas, usage, voices] = await Promise.all([
+      const [instructions, memory, personas, usage, voices, prefs] = await Promise.all([
         A.api("/api/settings/instructions").catch(() => ({ text: "" })),
         A.api("/api/settings/memory").catch(() => ({ auto: true, memories: [] })),
         A.api("/api/settings/personas").catch(() => []),
         A.api("/api/usage").catch(() => null),
         A.api("/api/voice/voices").catch(() => ({ voices: [] })),
+        A.api("/api/settings/prefs").catch(() => null),
       ]);
       $("#instructions").value = instructions.text || "";
       $("#auto-memory").checked = Boolean(memory.auto);
@@ -26,10 +30,15 @@
       S.personas = personas || [];
       S.usage = usage;
       S.voices = voices.voices || [];
+      S.hd = voices.hd || null;
+      S.hdVoices = (voices.hd && voices.hd.voices) || [];
+      S.hdLanguages = (voices.hd && voices.hd.languages) || [];
+      S.prefs = prefs || S.prefs;
       renderMemories();
       renderPersonas();
-      renderUsage();
+      // Voice prefs first: a partial usage payload must never hide them.
       renderVoiceOptions();
+      renderUsage();
       renderStorage(usage);
       $("#about-version").textContent = A.version;
     } catch (err) {
@@ -166,30 +175,131 @@
   }
 
   function renderVoiceOptions() {
-    const select = $("#voice-select");
-    if (!select || !S.voices.length) return;
-    select.innerHTML = "";
-    for (const voice of S.voices) {
-      select.append(A.el("option", {
-        value: voice.id, text: `${voice.name} — ${voice.tags}`,
-        selected: voice.id === A.voiceEngine.voice,
-      }));
-    }
-    select.onchange = () => {
-      A.setVoice(select.value);
-      A.toast(`Voice set to ${select.options[select.selectedIndex].text.split(" — ")[0]}`);
-    };
+    renderVoicePrefs();
     const speed = $("#voice-speed");
     speed.value = String(A.voiceEngine.speed);
     $("#voice-speed-value").textContent = `${A.voiceEngine.speed.toFixed(2)}×`;
     speed.oninput = () => {
       A.setVoiceSpeed(Number(speed.value));
       $("#voice-speed-value").textContent = `${A.voiceEngine.speed.toFixed(2)}×`;
+      savePrefs({ voice_speed: Number(speed.value) }, true);
     };
     $("#voice-test").onclick = () => A.speak(
       "Hi, this is how I sound in a call. Free shared voice servers can have short waits, "
       + "and if they are busy I switch to your device's best voice.", $("#voice-test"));
   }
+
+  /* ─────────────────────── voice preferences (v2) ─────────────────── */
+
+  function savePrefs(patch, quiet = false) {
+    S.prefs = { ...(S.prefs || {}), ...patch };
+    if (patch.exam) S.prefs.exam = { ...(S.prefs.exam || {}), ...patch.exam };
+    return A.api("/api/settings/prefs", { method: "PUT", body: patch }).then(
+      (saved) => {
+        S.prefs = saved;
+        A.voiceEngine?.syncPrefs?.(saved);
+        if (!quiet) A.toast("Voice settings saved", { timeout: 1600 });
+        return saved;
+      },
+      (err) => {
+        if (!quiet) A.toast(err.detail || "Could not save the voice settings", { type: "err" });
+        return S.prefs;
+      },
+    );
+  }
+  A.saveVoicePrefs = savePrefs;
+
+  function renderVoicePrefs() {
+    const prefs = S.prefs || {};
+    const hd = S.hd || { enabled: false, languages: [], voices: [] };
+    const hdBox = $("#voice-hd");
+    const langSelect = $("#voice-language");
+    const voiceSelect = $("#voice-select");
+    if (!hdBox || !langSelect || !voiceSelect) return;
+
+    // ── HD toggle
+    hdBox.checked = prefs.voice_hd !== false;
+    hdBox.disabled = !hd.enabled;
+    $("#voice-hd-note").classList.toggle("hidden", hd.enabled);
+    hdBox.onchange = () => {
+      // Turning HD off means "device voices only": the call engine stops
+      // asking the server for speech and uses the browser's own voices.
+      savePrefs({ voice_hd: hdBox.checked });
+      renderVoicePrefs();
+    };
+
+    // ── language list: Auto, then the popular codes, then the rest
+    const languages = S.hdLanguages.length
+      ? S.hdLanguages
+      : [{ code: "en", name: "English", count: 1 }];
+    const current = prefs.voice_language || "auto";
+    langSelect.innerHTML = "";
+    langSelect.append(A.el("option", { value: "auto", text: "Auto (the language used)" }));
+    for (const language of languages) {
+      langSelect.append(A.el("option", {
+        value: language.code,
+        text: `${language.name}${language.count ? ` (${language.count})` : ""}`,
+      }));
+    }
+    langSelect.value = current === "auto" || languages.some((l) => l.code === current)
+      ? current : "auto";
+    langSelect.onchange = () => {
+      savePrefs({ voice_language: langSelect.value, voice_name: "" });
+      renderVoicePrefs();
+    };
+
+    // ── voice list, filtered by the chosen language
+    const selectedLang = langSelect.value;
+    voiceSelect.innerHTML = "";
+    if (!hdBox.checked || !hd.enabled) {
+      voiceSelect.append(A.el("option", { value: "", text: "Device voices only" }));
+      voiceSelect.disabled = true;
+      return;
+    }
+    voiceSelect.disabled = false;
+    voiceSelect.append(A.el("option", { value: "", text: "Auto (best match)" }));
+    let pool = S.hdVoices;
+    if (selectedLang !== "auto") {
+      const matches = pool.filter((v) => v.lang === selectedLang);
+      if (matches.length) pool = matches;
+    } else {
+      // Keep the list short and useful: the curated popular voices first.
+      const popular = pool.filter((v) => /Sardor|Madina|AndrewMultilingual|EmmaMultilingual|RyanNeural|SoniaNeural|Dmitry|Svetlana|Ahmet|Emel/.test(v.short));
+      pool = popular.length ? popular : pool.slice(0, 24);
+    }
+    for (const voice of pool) {
+      voiceSelect.append(A.el("option", {
+        value: voice.short,
+        text: `${voice.name} · ${voice.locale}`,
+      }));
+    }
+    const wanted = prefs.voice_name || "";
+    voiceSelect.value = pool.some((v) => v.short === wanted) ? wanted : "";
+    voiceSelect.onchange = () => {
+      savePrefs({ voice_name: voiceSelect.value });
+      if (voiceSelect.value) A.previewVoice(voiceSelect.value);
+    };
+
+    // ── strong language
+    const strong = $("#allow-strong-language");
+    strong.checked = Boolean(prefs.allow_strong_language);
+    strong.onchange = () => savePrefs({ allow_strong_language: strong.checked });
+
+    // ── exam mode
+    const preset = $("#exam-preset");
+    const exam = prefs.exam || {};
+    preset.value = exam.enabled ? (exam.preset || "ielts") : "off";
+    const topic = $("#exam-topic");
+    topic.value = exam.topic || "";
+    topic.classList.toggle("hidden", preset.value !== "custom");
+    preset.onchange = () => {
+      const value = preset.value;
+      topic.classList.toggle("hidden", value !== "custom");
+      savePrefs({ exam: { enabled: value !== "off", preset: value === "off" ? "ielts" : value } });
+    };
+    topic.onchange = () => savePrefs({ exam: { enabled: true, preset: "custom", topic: topic.value.trim() } });
+  }
+  A.renderVoicePrefs = renderVoicePrefs;
 
   /* ─────────────────────────── Teach mode ─────────────────────────── */
 

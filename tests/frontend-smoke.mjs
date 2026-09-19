@@ -42,6 +42,12 @@ const state = {
   slides: [],
   calls: [],
   tts: 0,
+  ttsBodies: [],
+  prefs: {
+    voice_hd: true, voice_language: "uz", voice_name: "uz-UZ-SardorNeural",
+    allow_strong_language: false,
+    exam: { enabled: false, preset: "ielts", topic: "" },
+  },
 };
 
 function json(body, status = 200) {
@@ -95,9 +101,15 @@ function fakeFetch(url, options = {}) {
   state.calls.push({ path, method, body });
   if (path === "/api/voice/tts") {
     state.tts += 1;
+    state.ttsBodies.push(body);
     return Promise.resolve(new Response(new Uint8Array(4096).buffer, {
-      status: 200, headers: { "content-type": "audio/mpeg" },
+      status: 200,
+      headers: { "content-type": "audio/mpeg", "x-aether-tts": "hd" },
     }));
+  }
+  if (path === "/api/settings/prefs") {
+    if (method === "PUT") Object.assign(state.prefs, body);
+    return Promise.resolve(json(state.prefs));
   }
   if (path === "/api/auth/me") return Promise.resolve(json({ id: 1, email: "tester@example.com", is_admin: false }));
   if (path === "/api/conversations" && method === "GET") return Promise.resolve(json([conversation]));
@@ -143,6 +155,15 @@ function fakeFetch(url, options = {}) {
       engine: "pollinations-openai-audio", keyless: true,
       voices: [{ id: "nova", name: "Nova", tags: "warm", default: true }, { id: "alloy", name: "Alloy", tags: "clear" }],
       note: "Free shared voice servers can have short waits.", speeds: [1], queue: {},
+      hd: {
+        enabled: true, default_voice: "en-US-AndrewMultilingualNeural",
+        languages: [{ code: "uz", name: "Uzbek", count: 2 }, { code: "en", name: "English", count: 4 }],
+        voices: [
+          { short: "uz-UZ-SardorNeural", name: "Sardor — Uzbek (male)", locale: "uz-UZ", lang: "uz", gender: "male" },
+          { short: "uz-UZ-MadinaNeural", name: "Madina — Uzbek (female)", locale: "uz-UZ", lang: "uz", gender: "female" },
+          { short: "en-US-AndrewMultilingualNeural", name: "Andrew — Multilingual", locale: "en-US", lang: "en", gender: "male" },
+        ],
+      },
     }));
   }
   if (path === "/api/presentations/decks") return Promise.resolve(json([]));
@@ -207,6 +228,11 @@ window.speechSynthesis = {
   getVoices: () => window.__voices || [],
 };
 window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
+const vvListeners = {};
+window.visualViewport = {
+  height: 800, offsetTop: 0,
+  addEventListener: (type, fn) => { (vvListeners[type] ||= []).push(fn); },
+};
 window.URL.createObjectURL = () => "blob:fake";
 window.URL.revokeObjectURL = () => {};
 window.Audio = class {
@@ -315,11 +341,54 @@ async function run() {
   check("deck viewer opened", !$("#slides-modal").classList.contains("hidden"));
   check("slide stage shows slide content", ($("#slide-stage").textContent || "").includes("Slide 1"));
 
+  // ── Settings → Voice (v2): HD toggle, language, voice, exam ────────
+  await window.Aether.loadSettings();
+  await wait(60);
+  const langOptions = [...window.document.querySelectorAll("#voice-language option")].map((o) => o.value);
+  check("voice language dropdown lists the HD languages",
+        langOptions[0] === "auto" && langOptions.includes("uz") && langOptions.includes("en"),
+        langOptions.join(","));
+  const settingsVoiceOptions = [...window.document.querySelectorAll("#voice-select option")].map((o) => o.value);
+  check("voice dropdown is filtered to the chosen language",
+        settingsVoiceOptions.includes("") && settingsVoiceOptions.includes("uz-UZ-SardorNeural")
+        && settingsVoiceOptions.includes("uz-UZ-MadinaNeural")
+        && !settingsVoiceOptions.includes("en-US-AndrewMultilingualNeural"),
+        settingsVoiceOptions.join(","));
+  check("HD toggle is on by default", $("#voice-hd").checked === true);
+  check("strong language is off by default", $("#allow-strong-language").checked === false);
+  check("exam mode starts off", $("#exam-preset").value === "off",
+        $("#exam-preset").value);
+  $("#exam-preset").value = "custom";
+  $("#exam-preset").onchange();
+  await wait(40);
+  check("choosing a custom exam topic reveals the topic input",
+        !$("#exam-topic").classList.contains("hidden"));
+  $("#exam-topic").value = "space travel";
+  $("#exam-topic").onchange();
+  await wait(40);
+  check("exam prefs round-trip to the server",
+        state.prefs.exam?.preset === "custom" && state.prefs.exam?.topic === "space travel",
+        JSON.stringify(state.prefs.exam));
+  $("#allow-strong-language").checked = true;
+  $("#allow-strong-language").onchange();
+  await wait(40);
+  check("strong-language toggle persists", state.prefs.allow_strong_language === true);
+  $("#allow-strong-language").checked = false;
+  $("#allow-strong-language").onchange();
+  $("#exam-preset").value = "off";
+  $("#exam-preset").onchange();
+  await wait(40);
+
   // voice call UI
   window.Aether.startCall();
   await wait(80);
   check("call view opened", !$("#call-view").classList.contains("hidden"));
-  check("voice picker populated", window.document.querySelectorAll("#call-voice option").length === 2);
+  const callVoiceOptions = [...window.document.querySelectorAll("#call-voice option")];
+  check("call voice picker offers the HD voices",
+        callVoiceOptions.length >= 3,
+        callVoiceOptions.map((o) => o.value).join(","));
+  check("call voice picker includes the chosen Uzbek voice",
+        callVoiceOptions.some((o) => o.value === "uz-UZ-SardorNeural"));
   window.Aether.endCall();
   await wait(30);
   check("call view closes", $("#call-view").classList.contains("hidden"));
@@ -388,6 +457,16 @@ async function run() {
         banner && banner.textContent !== firstCountdown,
         `${firstCountdown} → ${banner?.textContent}`);
 
+  // ── mobile keyboard: the composer must lift by the keyboard height ──
+  const kb = () => window.document.documentElement.style.getPropertyValue("--kb");
+  check("no keyboard → no composer lift", kb() === "0px", kb());
+  window.visualViewport.height = 430;
+  (vvListeners.resize || []).forEach((fn) => fn());
+  check("keyboard open lifts the composer by its height", kb() === "338px", kb());
+  window.visualViewport.height = 790;                   // browser chrome only
+  (vvListeners.resize || []).forEach((fn) => fn());
+  check("a small chrome shift is ignored", kb() === "0px", kb());
+
   // ── offline handling ────────────────────────────────────────────────
   window.dispatchEvent(new window.Event("offline"));
   check("offline note appears when the network drops",
@@ -412,12 +491,53 @@ async function run() {
   const ttsDeadline = Date.now() + 6000;
   while (state.tts < 2 && Date.now() < ttsDeadline) await wait(25);
   check("TTS is requested sentence by sentence", state.tts >= 2, `${state.tts} tts calls`);
+  const voiceTts = state.ttsBodies.filter((b) => b.provider);
+  check("TTS asks for provider=auto",
+        voiceTts.length > 0 && voiceTts.every((b) => b.provider === "auto"),
+        voiceTts[0]?.provider || "none");
+  check("TTS sends the HD voice chosen in Settings",
+        voiceTts.some((b) => b.voice === "uz-UZ-SardorNeural"),
+        voiceTts[0]?.voice || "none");
   check("audio playback started", Boolean(window.__audio?.started));
   // barge-in: start talking while Aether is mid-sentence
   const audio = window.__audio;
   rec.onspeechstart?.();
   check("barge-in pauses the audio mid-sentence", audio?.paused === true, `paused=${audio?.paused}`);
   check("barge-in leaves the mic listening", Boolean(window.Aether.voiceCall.listening) || true);
+
+  // ── exam mode ───────────────────────────────────────────────────────
+  const examChip = $("#call-mode-exam");
+  examChip.click();
+  await wait(20);
+  check("exam chip turns the call into an exam", examChip.classList.contains("active"));
+  check("exam HUD appears", !$("#call-hud").classList.contains("hidden")
+        && /Speaking exam/.test($("#call-hud").textContent), $("#call-hud").textContent);
+  check("Done and Finish buttons appear in exam mode",
+        !$("#call-done").classList.contains("hidden") && !$("#call-finish").classList.contains("hidden"));
+  const streamsBeforeExam = state.calls.filter((c) => c.path === "/api/chat/stream").length;
+  rec.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: "I think cities need more parks" }], { isFinal: true })] });
+  await wait(1700);                       // still inside the 2.4s exam window
+  check("exam silence window is longer than the normal one",
+        state.calls.filter((c) => c.path === "/api/chat/stream").length === streamsBeforeExam);
+  await wait(1200);
+  check("exam answer is sent after the longer pause",
+        state.calls.filter((c) => c.path === "/api/chat/stream").length === streamsBeforeExam + 1);
+  await wait(120);
+  check("exam HUD counts the examiner question",
+        /question 1/.test($("#call-hud").textContent), $("#call-hud").textContent);
+  const streamsBeforeDone = state.calls.filter((c) => c.path === "/api/chat/stream").length;
+  rec.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: "Habitat loss is the biggest risk" }], { isFinal: true })] });
+  $("#call-done").click();                // Done sends immediately — no silence wait
+  await wait(120);
+  check("Done sends the answer without waiting",
+        state.calls.filter((c) => c.path === "/api/chat/stream").length === streamsBeforeDone + 1);
+  const streamsBeforeFinish = state.calls.filter((c) => c.path === "/api/chat/stream").length;
+  $("#call-finish").click();
+  await wait(120);
+  const finishCall = state.calls.filter((c) => c.path === "/api/chat/stream").slice(-1)[0];
+  check("Finish asks the examiner for the feedback card",
+        state.calls.filter((c) => c.path === "/api/chat/stream").length === streamsBeforeFinish + 1
+        && /finished/i.test(finishCall?.body?.message || ""), finishCall?.body?.message);
   window.Aether.endCall();
   await wait(60);
 

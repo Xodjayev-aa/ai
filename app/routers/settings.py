@@ -8,7 +8,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.database import (
-    add_memory, create_persona, delete_memory, delete_persona, get_auto_memory,
+    add_memory, create_persona, delete_memory, delete_persona, get_auto_memory, get_prefs,
+    set_prefs,
     get_custom_instructions, list_conversations, list_memories, list_messages,
     list_personas, set_auto_memory, set_custom_instructions, update_memory,
 )
@@ -32,6 +33,20 @@ def get_instructions(user=Depends(get_current_user)):
 def put_instructions(body: InstructionsBody, user=Depends(get_current_user)):
     set_custom_instructions(user["id"], body.text)
     return {"status": "success"}
+
+
+# ------------------------------------------------------------ preferences
+
+@router.get("/prefs")
+def prefs_get(user=Depends(get_current_user)):
+    """Voice / language / style / exam preferences (all defaulted)."""
+    return get_prefs(user["id"])
+
+
+@router.put("/prefs")
+def prefs_put(body: dict, user=Depends(get_current_user)):
+    """Partial update — send only the keys you change."""
+    return set_prefs(user["id"], body or {})
 
 
 # --------------------------------------------------------- auto memory
@@ -121,6 +136,7 @@ def export_all(user=Depends(get_current_user)):
             __import__("datetime").timezone.utc).isoformat(),
         "settings": {
             "custom_instructions": get_custom_instructions(user["id"]),
+            "preferences": get_prefs(user["id"]),
             "long_term_memory": get_auto_memory(user["id"]),
         },
         "memories": list_memories(user["id"]),
