@@ -61,7 +61,11 @@
   /* ─────────────────────── browser neural voices ──────────────────── */
 
   const NEURAL_HINT = /(natural|neural|online|google|samantha|aria|jenny|guy|libby|sonia|ryan|siri|eloquence|premium|enhanced)/i;
-  const ROBOTIC_HINT = /(espeak|albert|bad news|bells|boing|bubbles|cellos|zarvox|whisper|trinoids|pipe organ|novelty|desktop)/i;
+  const ROBOTIC_HINT = /(espeak|albert|bad news|bells|boing|bubbles|cellos|zarvox|whisper|trinoids|pipe organ|novelty|desktop|compact|robotic)/i;
+  // Voices that are plain but genuinely pleasant — a tier above the harsh
+  // legacy SAPI/GPS set when no neural voice is installed at all.
+  const PLEASANT_HINT = /(zira|serena|moira|tessa|fiona|karen|catherine|susan|michelle|emma|amelie|joanna|kendra|kimberly|salli)/i;
+  const HARSH_HINT = /(david|mark|fred|albert|victoria|agnes|junior|ralph|harsh|flat)/i;
 
   A.pickBrowserVoice = function pickBrowserVoice() {
     if (!window.speechSynthesis) return null;
@@ -72,6 +76,8 @@
       let value = 0;
       if (NEURAL_HINT.test(`${voice.name} ${voice.voiceURI}`)) value += 10;
       if (ROBOTIC_HINT.test(voice.name)) value -= 20;
+      if (PLEASANT_HINT.test(voice.name)) value += 5;
+      if (HARSH_HINT.test(voice.name)) value -= 3;
       if (voice.localService === false) value += 4;      // cloud voices sound best
       if (/^en-US/i.test(voice.lang)) value += 2;
       if (/samantha|aria|jenny|libby|sonia|natural/i.test(voice.name)) value += 3;

@@ -50,13 +50,17 @@ function json(body, status = 200) {
   });
 }
 
-function makeStream(text, { delayMs = 5, failAfter = null } = {}) {
+function makeStream(text, { delayMs = 5, failAfter = null, pingFirst = false } = {}) {
   const encoder = new TextEncoder();
   const words = text.split(" ");
   return new ReadableStream({
     async start(controller) {
       controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "meta", conversation_id: conversation.id, message_id: "m-1", usage: { used_today: 1, limit: 300 } })}\n\n`));
       controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "phase", phase: "draft" })}\n\n`));
+      if (pingFirst) {
+        controller.enqueue(encoder.encode(": keep-alive\n\n"));
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "ping", elapsed: 6, text: "" })}\n\n`));
+      }
       let index = 0;
       const timer = setInterval(() => {
         if (state.abort?.signal.aborted) {
@@ -106,7 +110,9 @@ function fakeFetch(url, options = {}) {
     const text = body.voice
       ? "Hello there. This is a streaming answer."
       : "Hello there, this is a streaming answer.";
-    return Promise.resolve(new Response(makeStream(text, { delayMs: 45 }),
+    // The first request is slow enough to trigger a keep-alive ping.
+    const pingFirst = /hexagon/.test(String(body.message || ""));
+    return Promise.resolve(new Response(makeStream(text, { delayMs: 45, pingFirst }),
       { status: 200, headers: { "content-type": "text/event-stream" } }));
   }
   if (path === "/api/chat/partial") return Promise.resolve(json({ status: "saved" }));
@@ -196,7 +202,10 @@ class FakeRecognition {
 }
 window.SpeechRecognition = FakeRecognition;
 window.webkitSpeechRecognition = FakeRecognition;
-window.speechSynthesis = { speak() {}, cancel() {}, getVoices: () => [], onvoiceschanged: null };
+window.speechSynthesis = {
+  speak() {}, cancel() {}, onvoiceschanged: null,
+  getVoices: () => window.__voices || [],
+};
 window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
 window.URL.createObjectURL = () => "blob:fake";
 window.URL.revokeObjectURL = () => {};
@@ -223,6 +232,14 @@ for (const name of SCRIPTS) {
 }
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+async function until(fn, ms = 4000) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (fn()) return true;
+    if (Date.now() > deadline) return false;
+    await wait(40);
+  }
+}
 const $ = (sel) => window.document.querySelector(sel);
 
 async function run() {
@@ -329,6 +346,55 @@ async function run() {
   check("markdown code card with copy button", md.includes("code-card") && md.includes("code-copy"));
   check("markdown table", md.includes("<table>") && md.includes("<th>a</th>"));
   check("markdown inline + bold", md.includes("inline-code") && md.includes("<strong>bold</strong>"));
+
+  // ── keep-alive pings: a slow answer must never look dead ───────────
+  $("#chat-input").value = "Explain the hexagon again slowly";
+  $("#send-btn").click();
+  const waited = await until(() => ($("#phase-bar")?.textContent || "").includes("Still working"), 5000);
+  check("a slow stream shows a live 'still working' phase, not silence", waited,
+        $("#phase-bar")?.textContent);
+  await wait(700);
+  check("the answer still arrives after the ping",
+        (window.document.querySelector(".msg.assistant:last-child .content")?.textContent || "")
+          .includes("streaming answer"));
+
+  // ── browser voice quality: neural names must beat robotic defaults ──
+  window.__voices = [
+    { name: "Albert", lang: "en-US", localService: true },
+    { name: "Google US English", lang: "en-US", localService: false },
+    { name: "Fred", lang: "en-US", localService: true },
+    { name: "Samantha", lang: "en-US", localService: true },
+  ];
+  const picked = window.Aether.pickBrowserVoice();
+  check("browser voice picker prefers neural/cloud voices over robotic defaults",
+        picked && ["Google US English", "Samantha"].includes(picked.name), picked?.name);
+  window.__voices = [
+    { name: "Microsoft David - English (United States)", lang: "en-US", localService: true },
+    { name: "Zira", lang: "en-US", localService: true },
+  ];
+  const fallbackPick = window.Aether.pickBrowserVoice();
+  check("voice picker still returns an English voice when nothing is neural",
+        fallbackPick?.name === "Zira", fallbackPick?.name);
+
+  // ── cooldown banner: live countdown, then recovery ─────────────────
+  window.Aether.__testCooldown?.(4);
+  const banner = window.document.querySelector("#cooldown-banner");
+  check("cooldown banner shows a live countdown",
+        banner && /retry in/i.test(banner.textContent) && !banner.classList.contains("hidden"),
+        banner?.textContent);
+  const firstCountdown = banner?.textContent || "";
+  await wait(1200);
+  check("countdown actually counts down",
+        banner && banner.textContent !== firstCountdown,
+        `${firstCountdown} → ${banner?.textContent}`);
+
+  // ── offline handling ────────────────────────────────────────────────
+  window.dispatchEvent(new window.Event("offline"));
+  check("offline note appears when the network drops",
+        !$("#offline-note").classList.contains("hidden"));
+  window.dispatchEvent(new window.Event("online"));
+  check("offline note clears when the network returns",
+        $("#offline-note").classList.contains("hidden"));
 
   // ── voice call flow: speak → auto-send → sentence-by-sentence TTS ──
   window.Aether.startCall();

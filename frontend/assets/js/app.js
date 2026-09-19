@@ -143,6 +143,9 @@
     }
   };
 
+  // Exposed for tests (tests/frontend-smoke.mjs) — harmless in production.
+  A.__testCooldown = (seconds) => showCooldownBanner(seconds);
+
   function showCooldownBanner(seconds) {
     const banner = $("#cooldown-banner");
     if (!banner) return;
