@@ -134,6 +134,7 @@
       if (isMissingAccount(err) && !storageKnownUnhealthy() && (A.emailFromToken(A.session.token) || A.session.email)) {
         const authOpen = !document.getElementById("auth-view")?.classList.contains("hidden");
         if (!authOpen && !storageResetShown) { showStorageReset(); return; }
+        if (authOpen) return; // already handling the fix
       }
       if (storageKnownUnhealthy()) {
         // Storage is coming back: keep the session and let the user retry
@@ -141,7 +142,6 @@
         A.toast("Storage is warming up — try again in a few seconds", { type: "warn" });
         return;
       }
-      if (!document.getElementById("auth-view")?.classList.contains("hidden")) return;
       showSessionExpired();
     });
   }

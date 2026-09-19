@@ -6,6 +6,7 @@
  *   AETHER_BASE=http://127.0.0.1:8001 node tests/frontend-e2e.mjs
  */
 import { readFileSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -84,8 +85,149 @@ const lastAssistant = () => {
   return all[all.length - 1]?.textContent || "";
 };
 
+// Helper to create a fresh app dom with optional token in localStorage
+function makeFreshDom({ token = "", email = "" } = {}) {
+  const fresh = new JSDOM(html, {
+    url: `${BASE}/`, runScripts: "outside-only", pretendToBeVisual: true, virtualConsole,
+  });
+  const w = fresh.window;
+  const rf = globalThis.fetch;
+  const calls = [];
+  w.fetch = (url, opts) => {
+    const target = String(url).startsWith("/") ? BASE + url : String(url);
+    const method = (opts && opts.method) ? opts.method.toUpperCase() : "GET";
+    calls.push({ url: target, path: String(url).split("?")[0], method, body: opts && opts.body ? (()=>{try{return JSON.parse(opts.body)}catch{return opts.body}})() : undefined });
+    if (process.env.AETHER_E2E_DEBUG) console.log("  →", method, target);
+    return rf(target, opts);
+  };
+  w.HTMLElement.prototype.scrollIntoView = () => {};
+  w.Audio = window.Audio;
+  w.URL.createObjectURL = window.URL.createObjectURL;
+  w.URL.revokeObjectURL = window.URL.revokeObjectURL;
+  w.SpeechRecognition = window.SpeechRecognition;
+  w.webkitSpeechRecognition = window.webkitSpeechRecognition;
+  w.speechSynthesis = window.speechSynthesis;
+  w.SpeechSynthesisUtterance = window.SpeechSynthesisUtterance;
+  if (token) w.localStorage.setItem("aether_token", token);
+  if (email) w.localStorage.setItem("aether_email", email);
+  for (const name of SCRIPTS) {
+    try { w.eval(readFileSync(join(root, "frontend/assets/js", name), "utf8")); } catch (e) { errors.push(`${name}: ${e.message}`); }
+  }
+  const $f = (sel) => w.document.querySelector(sel);
+  const $$f = (sel) => Array.from(w.document.querySelectorAll(sel));
+  const waitF = (ms) => new Promise(r => setTimeout(r, ms));
+  async function untilF(fn, ms=20000) { const d=Date.now()+ms; for(;;){ if(fn()) return true; if(Date.now()>d) return false; await waitF(50);} }
+  return { w, calls, $f, $$f, waitF, untilF };
+}
+
 async function run() {
   check("scripts evaluated without exceptions", errors.length === 0, errors.join(" | "));
+
+  // ── NEW AUTH TEST 1: stale JWT → create account must hit /api/auth/register, no storage-reset toast after auth ──
+  {
+    // Create a real user, then delete it so its token becomes stale (valid signature, missing account = User not found)
+    let staleJwt = "";
+    try {
+      const staleEmail = `stale-seed-${Date.now()}@example.com`;
+      const reg = await realFetch(`${BASE}/api/auth/register`, { method:"POST", headers:{ "content-type":"application/json" }, body: JSON.stringify({ email: staleEmail, password: "supersecret1" }) });
+      const j = await reg.json();
+      staleJwt = j.access_token || "";
+      // Delete the user directly from the mock DB so the token becomes stale (user not found but token still valid)
+      try {
+        execSync(`/tmp/venv/bin/python -c "import sqlite3; con=sqlite3.connect('/tmp/aether-mock.db'); cur=con.cursor(); cur.execute('DELETE FROM users WHERE email=?', ('${staleEmail}'.lower(),)); con.commit(); con.close(); print('deleted')"`, { timeout: 5000 });
+      } catch {}
+      // Fallback: if delete failed, just forge a decodable JWT (will be treated as expired, but test will still check register path)
+      if (!staleJwt) {
+        const b64 = (v) => Buffer.from(JSON.stringify(v)).toString("base64url");
+        staleJwt = `${b64({alg:"HS256"})}.${b64({sub: staleEmail, exp: 4102444800})}.sig`;
+      }
+    } catch {}
+    if (!staleJwt) {
+      const b64 = (v) => Buffer.from(JSON.stringify(v)).toString("base64url");
+      staleJwt = `${b64({alg:"HS256"})}.${b64({sub:"stale-e2e@example.com", exp: 4102444800})}.sig`;
+    }
+    const fresh = makeFreshDom({ token: staleJwt, email: "stale-e2e@example.com" });
+    const { w, calls, $f, waitF, untilF } = fresh;
+    // wait for boot to finish and auth view to appear
+    await untilF(() => w.document.readyState !== "loading", 5000);
+    await waitF(300);
+    await untilF(() => !w.document.querySelector("#auth-view")?.classList.contains("hidden"), 8000);
+    const authVisible = !w.document.querySelector("#auth-view")?.classList.contains("hidden");
+    check("stale JWT: auth view appears (boot handles missing account)", authVisible);
+    // capture toast count before interaction
+    const toastsBefore = w.document.querySelector("#toasts")?.textContent || "";
+    const storageToastBefore = (toastsBefore.match(/Storage was reset/g) || []).length;
+    // Drive through Create account via stable ids/data-testid
+    const tabReg = w.document.querySelector('#tab-register') || w.document.querySelector('[data-testid="tab-register"]');
+    const tabLog = w.document.querySelector('#tab-login');
+    check("stale JWT: register tab exists with stable id", Boolean(tabReg) && Boolean(tabLog));
+    // Click Create account tab (must use the tab, not rely on auto-switch)
+    if (tabReg) tabReg.click();
+    await waitF(100);
+    const modeNow = w.document.querySelector("#auth-mode")?.value;
+    check("stale JWT: clicking Create account sets mode to register", modeNow === "register", `mode=${modeNow}`);
+    const emailInput = w.document.querySelector("#auth-email");
+    const passInput = w.document.querySelector("#auth-password");
+    const submitBtn = w.document.querySelector('#auth-submit') || w.document.querySelector('[data-testid="auth-submit"]');
+    check("stale JWT: submit button has stable id", Boolean(submitBtn));
+    const testEmail = `stalefix-${Date.now()}@example.com`;
+    emailInput.value = testEmail;
+    passInput.value = "supersecret1";
+    // Clear previous calls to isolate register request
+    calls.length = 0;
+    w.document.querySelector("#auth-form").dispatchEvent(new w.Event("submit", { bubbles: true, cancelable: true }));
+    const signedIn = await untilF(() => !w.document.querySelector("#app-view")?.classList.contains("hidden"), 30000);
+    check("stale JWT → register signs in (hits /api/auth/register, not login)", signedIn, w.document.querySelector("#auth-error")?.textContent || "");
+    const regCall = calls.find(c => c.path === "/api/auth/register");
+    const loginCall = calls.find(c => c.path === "/api/auth/login" && c.method === "POST");
+    check("stale JWT: request went to /api/auth/register", Boolean(regCall), `calls: ${calls.map(c=>c.path).join(",")}`);
+    check("stale JWT: did not hit /api/auth/login for create-account", !loginCall || calls.filter(c=>c.path==="/api/auth/login").length===0, `login calls: ${calls.filter(c=>c.path==="/api/auth/login").length}`);
+    const tokenStored = Boolean(w.localStorage.getItem("aether_token"));
+    check("stale JWT: token stored after register", tokenStored);
+    // Verify /api/auth/me passes and no extra storage-reset toast after auth screen opened
+    let meOk = false;
+    try { const me = await w.Aether.api("/api/auth/me"); meOk = Boolean(me && me.email); } catch {}
+    check("stale JWT: /api/auth/me passes after register", meOk);
+    const toastsAfter = w.document.querySelector("#toasts")?.textContent || "";
+    const storageToastAfter = (toastsAfter.match(/Storage was reset/g) || []).length;
+    // At most one toast total, and no new storage-reset toast appeared after we opened auth and submitted
+    check("stale JWT: no Storage was reset toast after auth screen (at most one total, none after submit)", storageToastAfter <= 1 && storageToastAfter === storageToastBefore, `before=${storageToastBefore} after=${storageToastAfter} toasts=${toastsAfter.slice(0,120)}`);
+    // Close this fresh dom
+    try { w.close(); } catch {}
+  }
+
+  // ── NEW AUTH TEST 2: register → reload → still signed in ──
+  {
+    const freshEmail = `reload-${Date.now()}@example.com`;
+    const fresh = makeFreshDom({});
+    const { w, waitF, untilF } = fresh;
+    await untilF(() => w.document.readyState !== "loading", 5000);
+    await waitF(200);
+    // register
+    const tabReg = w.document.querySelector('#tab-register');
+    if (tabReg) tabReg.click();
+    await waitF(80);
+    w.document.querySelector("#auth-email").value = freshEmail;
+    w.document.querySelector("#auth-password").value = "supersecret1";
+    w.document.querySelector("#auth-form").dispatchEvent(new w.Event("submit", { bubbles: true, cancelable: true }));
+    const ok = await untilF(() => !w.document.querySelector("#app-view")?.classList.contains("hidden"), 30000);
+    check("register → reload: first register succeeds", ok);
+    const token1 = w.localStorage.getItem("aether_token") || "";
+    check("register → reload: token stored", Boolean(token1));
+    // Simulate reload: create another dom with same token
+    const tokenForReload = token1;
+    const emailForReload = freshEmail;
+    try { w.close(); } catch {}
+    const reloadDom = makeFreshDom({ token: tokenForReload, email: emailForReload });
+    const { w: w2, waitF: waitF2, untilF: untilF2 } = reloadDom;
+    await untilF2(() => w2.document.readyState !== "loading", 5000);
+    await waitF2(400);
+    const stillSignedIn = await untilF2(() => !w2.document.querySelector("#app-view")?.classList.contains("hidden"), 10000);
+    check("register → reload: still signed in after reload", stillSignedIn, w2.document.querySelector("#auth-error")?.textContent || w2.document.querySelector("#toasts")?.textContent?.slice(0,80) || "");
+    try { const me2 = await w2.Aether.api("/api/auth/me"); check("register → reload: /api/auth/me still passes", Boolean(me2 && me2.email === emailForReload), me2?.email || "no me"); } catch (e) { check("register → reload: /api/auth/me still passes", false, String(e.message)); }
+    try { w2.close(); } catch {}
+  }
+
   // jsdom fires DOMContentLoaded asynchronously; the app boots on it.
   await until(() => window.document.readyState !== "loading", 5000);
   await wait(150);
