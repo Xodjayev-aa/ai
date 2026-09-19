@@ -341,6 +341,12 @@ async function run() {
   await until(() => /question \d/.test($("#call-hud").textContent), 20000);
   check("exam HUD counts the question",
         /question \d/.test($("#call-hud").textContent), $("#call-hud").textContent);
+  const examPrompt = await capturedPrompt();
+  check("the examiner brief reaches the model in exam mode",
+        /examiner/i.test(examPrompt) && /exactly ONE question per turn/i.test(examPrompt),
+        examPrompt.includes("EXAM MODE RULES") ? "exam rules present" : "exam rules missing");
+  check("the language clause still applies to the exam",
+        /Reply in /.test(examPrompt));
   check("Done and Finish controls live in the call",
         Boolean($("#call-done")) && Boolean($("#call-finish"))
         && !$("#call-done").classList.contains("hidden"));
