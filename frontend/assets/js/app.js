@@ -124,10 +124,13 @@
         data.database?.warning || "",
       ].filter(Boolean).join("\n");
       const storage = data.database || {};
-      $("#storage-banner")?.classList.toggle("hidden", Boolean(storage.persistent) && !storage.warning);
-      if (!storage.persistent || storage.warning) {
+      const security = data.security || {};
+      const notice = storage.warning || security.warning || "";
+      const healthy = Boolean(storage.persistent) && !notice;
+      $("#storage-banner")?.classList.toggle("hidden", healthy);
+      if (!healthy) {
         const banner = $("#storage-banner");
-        if (banner) banner.textContent = storage.warning
+        if (banner) banner.textContent = notice
           || "Temporary storage in this preview — chats may not persist.";
       }
       if (cooling && queue.retry_after_seconds > 0) showCooldownBanner(queue.retry_after_seconds);

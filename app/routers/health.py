@@ -4,6 +4,7 @@ from app.ai import client, config, keyless
 from app.ai.rotator import pool
 from app.db.engine import status as db_status
 from app.database import count_users
+from app.security import secret_status
 
 router = APIRouter(prefix="/api", tags=["health"])
 
@@ -32,6 +33,7 @@ async def ai_status():
     return {
         "version": VERSION,
         "database_mode": db_status()["mode"],
+        "security": secret_status(),
         "database": db_status(),
         "providers_configured": len(providers),
         "providers": providers,
