@@ -110,8 +110,8 @@ def test_login_survives_one_transient_failure(monkeypatch):
     monkeypatch.setattr(auth_router, "get_user_by_email", flaky)
     r = client.post("/api/auth/login",
                     json={"email": "nobody@example.com", "password": "secret1"})
-    assert r.status_code == 401, r.text
-    assert r.json()["detail"] == "Invalid credentials"
+    assert r.status_code == 404, r.text
+    assert r.json()["detail"] == "No account with this email yet — create one below"
 
 
 def test_login_returns_503_when_the_database_stays_cold(monkeypatch):

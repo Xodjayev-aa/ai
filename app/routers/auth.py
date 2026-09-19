@@ -84,7 +84,7 @@ def _set_session_cookie(request: Request, response: Response, token: str) -> Non
 def register(payload: AuthPayload, request: Request, response: Response):
     email = payload.email.lower()
     if auth_db_call(lambda: get_user_by_email(email), label="register lookup"):
-        raise HTTPException(status_code=400, detail="Email already registered")
+        raise HTTPException(status_code=409, detail="Account exists — sign in instead")
     _validate_password(payload.password)
     owner_email = os.getenv("OWNER_EMAIL", "").strip().lower()
     is_admin = bool(owner_email) and email == owner_email
@@ -106,9 +106,12 @@ def login(payload: AuthPayload, request: Request, response: Response):
             detail="Too many failed attempts. Try again in ~15 minutes.",
         )
     user = auth_db_call(lambda: get_user_by_email(email), label="login lookup")
-    if not user or not verify_password(payload.password, user["password_hash"]):
+    if not user:
         _record_failure(identity)
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+        raise HTTPException(status_code=404, detail="No account with this email yet — create one below")
+    if not verify_password(payload.password, user["password_hash"]):
+        _record_failure(identity)
+        raise HTTPException(status_code=401, detail="Wrong password")
     token = create_access_token({"sub": user["email"], "id": user["id"]})
     _set_session_cookie(request, response, token)
     return {"access_token": token, "token_type": "bearer",
