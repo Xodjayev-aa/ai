@@ -60,9 +60,17 @@ class Results:
 R = Results()
 
 
+BYPASS = os.getenv("AETHER_BYPASS", "").strip()
+
+
 def client() -> httpx.Client:
-    return httpx.Client(timeout=TIMEOUT, follow_redirects=True,
-                        headers={"User-Agent": "aether-e2e"})
+    headers = {"User-Agent": "aether-e2e"}
+    if BYPASS:
+        # Vercel deployment protection (preview URLs): "Protection Bypass for
+        # Automation" secret lets CI reach the preview without SSO.
+        headers["x-vercel-protection-bypass"] = BYPASS
+        headers["x-vercel-set-bypass-cookie"] = "true"
+    return httpx.Client(timeout=TIMEOUT, follow_redirects=True, headers=headers)
 
 
 def read_sse(resp: httpx.Response, on_event, deadline: float) -> str:
@@ -100,8 +108,12 @@ def test_static(c: httpx.Client, base: str) -> None:
 
     r = c.get(f"{base}/")
     html = r.text
-    R.add("app shell loads", r.status_code == 200 and "<title>Aether</title>" in html,
+    looks_like_app = "<title>Aether</title>" in html
+    R.add("app shell loads", r.status_code == 200 and looks_like_app,
           f"{len(html)} bytes")
+    if not looks_like_app:
+        R.add("deployment reachable without SSO", False,
+              "got an HTML login/protection page — is this a protected preview?")
 
     logo = c.get(f"{base}/icons/icon-512.png")
     R.add("logo asset served", logo.status_code == 200 and len(logo.content) > 2000,
@@ -390,6 +402,8 @@ def test_status(c: httpx.Client, base: str) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--base-url", required=True)
+    ap.add_argument("--report", default="",
+                    help="write the markdown report to this file")
     args = ap.parse_args()
     base = args.base_url.rstrip("/")
 
@@ -416,7 +430,12 @@ def main() -> int:
         test_voice(c, base)
         test_status(c, base)
 
-    print("\n" + R.summary_markdown())
+    markdown = R.summary_markdown()
+    print("\n" + markdown)
+    if args.report:
+        verdict = ("❌ " + ", ".join(n for n, _, _ in R.failed)) if R.failed else "✅ all green"
+        with open(args.report, "w", encoding="utf-8") as fh:
+            fh.write(f"Target: `{base}` — {verdict}\n\n{markdown}\n")
     summary_path = os.getenv("GITHUB_STEP_SUMMARY")
     if summary_path:
         with open(summary_path, "a", encoding="utf-8") as fh:

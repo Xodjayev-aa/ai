@@ -65,6 +65,8 @@ def main() -> int:
     ap.add_argument("--sha", required=True)
     ap.add_argument("--github-output", default=os.getenv("GITHUB_OUTPUT", ""))
     ap.add_argument("--timeout", type=int, default=900)
+    ap.add_argument("--print-url-only", action="store_true",
+                    help="print just the URL on stdout (for CI shell capture)")
     args = ap.parse_args()
 
     token = os.getenv("GH_TOKEN") or os.getenv("GITHUB_TOKEN") or ""
@@ -83,6 +85,9 @@ def main() -> int:
         # if Vercel only produced a production deployment for this commit.
         if urls:
             url = urls[0]
+            if args.print_url_only:
+                print(url)
+                return 0
             if args.github_output:
                 with open(args.github_output, "a", encoding="utf-8") as fh:
                     fh.write(f"base_url={url}\n")

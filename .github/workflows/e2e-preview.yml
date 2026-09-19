@@ -1,21 +1,26 @@
-# End-to-end check against a *real deployed* environment with ZERO API keys.
+# Keyless end-to-end verification.
 #
-# What it does:
-#   1. waits for the Vercel preview deployment attached to the pushed commit
-#   2. runs tests/e2e_preview.py against it: auth, keyless chat (SSE),
-#      presentations (+ .pptx and HTML export), images, voice/TTS
-#   3. prints a human-readable summary into the workflow summary
+# Purpose: prove that chat, presentations (.pptx + HTML), images and voice all
+# work with ZERO API keys — before and after a merge.
 #
-# It is non-blocking for the deployment itself (Vercel ships the build);
-# a red X here means "the live product is broken", which is exactly what we
-# want to catch before merging.
-name: E2E (preview)
+# Where it runs (automatic, in this order):
+#   1. `workflow_dispatch` with `base_url`  → tests that exact deployment
+#      (used after a merge: https://aiaether.vercel.app)
+#   2. the Vercel *preview* deployment of the pushed commit, when the repo
+#      secret VERCEL_AUTOMATION_BYPASS_SECRET is configured (preview URLs are
+#      protected by Vercel SSO by default)
+#   3. otherwise → boots the real app with uvicorn on the runner (no keys at
+#      all) and tests it over HTTP against the live Pollinations free tier
+#
+# Results are posted back as a single sticky PR comment, so the report is
+# readable straight from the pull request.
+name: E2E (keyless)
 
 on:
   workflow_dispatch:
     inputs:
       base_url:
-        description: "Base URL to test (blank = auto-detect preview for this commit)"
+        description: "Base URL to test (blank = auto)"
         required: false
         default: ""
   push:
@@ -27,6 +32,7 @@ permissions:
   contents: read
   deployments: read
   statuses: read
+  pull-requests: write
 
 concurrency:
   group: e2e-${{ github.ref }}
@@ -35,34 +41,93 @@ concurrency:
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
-      - name: Install test deps
-        run: pip install --quiet httpx python-pptx
+      - name: Install dependencies
+        run: |
+          pip install --quiet -r requirements.txt
+          pip install --quiet httpx python-pptx
 
-      - name: Wait for the Vercel deployment of this commit
+      - name: Probe the keyless providers (informational)
+        continue-on-error: true
+        run: python tests/probe_pollinations.py | tee probe.txt
+
+      - name: Pick a target deployment
         id: target
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
           set -euo pipefail
           manual="${{ github.event.inputs.base_url || '' }}"
           if [ -n "$manual" ]; then
+            echo "mode=external" >> "$GITHUB_OUTPUT"
             echo "base_url=$manual" >> "$GITHUB_OUTPUT"
+            echo "Target (manual): $manual"
             exit 0
           fi
-          python tests/wait_for_preview.py --repo "${{ github.repository }}" \
-            --sha "${{ github.sha }}" --github-output "$GITHUB_OUTPUT"
+          preview=$(python tests/wait_for_preview.py --repo "${{ github.repository }}" \
+            --sha "${{ github.sha }}" --timeout 600 --print-url-only || true)
+          if [ -n "${BYPASS_SECRET:-}" ] && [ -n "${preview:-}" ]; then
+            echo "mode=external" >> "$GITHUB_OUTPUT"
+            echo "base_url=$preview" >> "$GITHUB_OUTPUT"
+            echo "Target (Vercel preview): $preview"
+          else
+            echo "mode=local" >> "$GITHUB_OUTPUT"
+            echo "base_url=http://127.0.0.1:8000" >> "$GITHUB_OUTPUT"
+            echo "No bypass secret / preview URL — testing a local boot of the app instead."
+          fi
 
-      - name: Run keyless E2E suite
+      - name: Boot the app (zero keys)
+        if: steps.target.outputs.mode == 'local'
+        env:
+          APP_SECRET: e2e-secret
+          DATABASE_URL: /tmp/aether-e2e.db
+        run: |
+          set -euo pipefail
+          env -u GEMINI_API_KEY -u GROQ_API_KEY -u CEREBRAS_API_KEY_1 \
+              -u CEREBRAS_API_KEY_2 -u POLLINATIONS_TOKEN \
+              python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 \
+              --log-level warning > server.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/api/health >/dev/null 2>&1; then
+              echo "app is up"; break
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8000/api/health
+
+      - name: Run the keyless E2E suite
+        id: suite
         env:
           AETHER_BASE_URL: ${{ steps.target.outputs.base_url }}
+          AETHER_BYPASS: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
-          echo "Testing: $AETHER_BASE_URL"
-          python tests/e2e_preview.py --base-url "$AETHER_BASE_URL"
+          set +e
+          python tests/e2e_preview.py --base-url "$AETHER_BASE_URL" \
+            --report e2e-report.md
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Server log (on failure)
+        if: steps.target.outputs.mode == 'local'
+        run: tail -n 120 server.log || true
+
+      - name: Post the report on the pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python tests/post_report.py "${{ github.event.pull_request.number || '' }}"
+
+      - name: Fail if the suite failed
+        if: steps.suite.outputs.exit_code != '0'
+        run: |
+          echo "Keyless E2E suite reported failures (see report above)."
+          exit 1
