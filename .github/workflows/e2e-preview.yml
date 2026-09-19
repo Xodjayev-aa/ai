@@ -29,6 +29,7 @@ on:
       - main
 
 permissions:
+  actions: read
   contents: read
   deployments: read
   statuses: read
@@ -64,6 +65,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          PROD_URL: ${{ vars.AETHER_E2E_PROD_URL || 'https://aiaether.vercel.app' }}
         run: |
           set -euo pipefail
           manual="${{ github.event.inputs.base_url || '' }}"
@@ -71,6 +73,21 @@ jobs:
             echo "mode=external" >> "$GITHUB_OUTPUT"
             echo "base_url=$manual" >> "$GITHUB_OUTPUT"
             echo "Target (manual): $manual"
+            exit 0
+          fi
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            # A merge to main IS the production deploy: verify the live site
+            # itself (what workflow_dispatch callers pass as base_url anyway).
+            # Give Vercel up to 10 min to finish building this exact commit.
+            ready=$(python tests/wait_for_preview.py --repo "${{ github.repository }}" \
+              --sha "${{ github.sha }}" --timeout 600 --print-url-only || true)
+            if [ -z "$ready" ]; then
+              echo "No successful deployment for ${{ github.sha }} within 10 min;"
+              echo "testing the current production URL anyway."
+            fi
+            echo "mode=external" >> "$GITHUB_OUTPUT"
+            echo "base_url=$PROD_URL" >> "$GITHUB_OUTPUT"
+            echo "Target (production): $PROD_URL"
             exit 0
           fi
           preview=$(python tests/wait_for_preview.py --repo "${{ github.repository }}" \
