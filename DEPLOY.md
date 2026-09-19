@@ -24,6 +24,14 @@ an honest warning banner whenever that is the case.
 - CLI equivalents: `turso db create aether`, `turso db show aether --http-url`,
   `turso db tokens create aether`
 
+If the database ever drops at runtime (cold edge, brief outage), the app
+degrades to temporary storage, shows a "Database hiccup — retrying
+automatically" banner, and **recovers on its own within ~30 seconds** —
+schema migration included, no redeploy needed. A redeploy is only required
+if the Turso *configuration* is wrong (bad URL/token); the banner says so
+explicitly in that case. Note that anything created while degraded lived in
+`/tmp` and does not survive — a degraded window's data is lost by design.
+
 ## 3. Environment variables (all optional)
 
 Vercel → project → **Settings → Environment Variables**:

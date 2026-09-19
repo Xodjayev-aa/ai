@@ -77,9 +77,14 @@ _schema_building = False
 _schema_error = ""
 
 
+def _one_line(exc: Exception, limit: int = 160) -> str:
+    """A single-line, UI-safe description of an error."""
+    return " ".join(f"{type(exc).__name__}: {exc}".split())[:limit]
+
+
 def _record_turso_error(exc: Exception) -> None:
     global _turso_error
-    _turso_error = f"{type(exc).__name__}: {exc}"[:300]
+    _turso_error = _one_line(exc, 300)
 
 
 def _is_transient(exc: Exception) -> bool:
@@ -91,16 +96,66 @@ def _is_transient(exc: Exception) -> bool:
     return is_transient_db_error(exc)
 
 
+def _is_recoverable_sql_error(exc: Exception) -> bool:
+    """A migration-level collision (e.g. 'duplicate column name') proves the
+    database *answered* — the schema simply already exists. It must never
+    count as a Turso outage and never be reported as the 'turso error'."""
+    return "duplicate column name" in str(exc).lower()
+
+
+def _looks_like_misconfiguration(exc: Exception) -> bool:
+    """True when the failure says the *configuration* is wrong (bad token,
+    typo'd URL) rather than the database hiccuping. Only then may the
+    user-facing banner point at TURSO_DATABASE_URL / TURSO_AUTH_TOKEN."""
+    try:
+        import httpx
+
+        if isinstance(exc, httpx.HTTPStatusError):
+            try:
+                code = exc.response.status_code
+            except Exception:  # pragma: no cover
+                code = 0
+            return code in (401, 403, 404)
+    except Exception:  # pragma: no cover
+        pass
+    message = str(exc).lower()
+    markers = (
+        "401 unauthorized",
+        "403 forbidden",
+        "404 not found",
+        "name or service not known",          # DNS: typo'd URL
+        "failed to resolve",
+        "temporary failure in name resolution",
+        "connection refused",                 # host answers nothing
+    )
+    return any(marker in message for marker in markers)
+
+
 def _degrade_to_sqlite(exc: Exception) -> None:
+    """Fall back to temporary storage and tell the user the truth.
+
+    A hiccup (cold database, brief outage, migration race) gets the
+    'retrying automatically' banner: a background probe flips the engine back
+    to Turso the moment it heals — no redeploy required. Only a genuinely
+    misconfigured Turso (bad URL/token) points at the environment variables.
+    """
     global MODE, _db_warning
     _record_turso_error(exc)
-    if MODE == "turso":
-        MODE = "sqlite"
+    if MODE != "turso":
+        return
+    MODE = "sqlite"
+    if _looks_like_misconfiguration(exc):
         _db_warning = (
-            "Turso is configured but unreachable — falling back to temporary "
-            "storage. Data may not persist until TURSO_DATABASE_URL / "
-            "TURSO_AUTH_TOKEN are fixed."
+            "Turso is misconfigured (TURSO_DATABASE_URL / TURSO_AUTH_TOKEN): "
+            f"{_one_line(exc)} — data is stored temporarily until fixed."
         )
+    else:
+        _db_warning = (
+            f"Database hiccup: {_one_line(exc)} — retrying automatically; "
+            "nothing you need to change."
+        )
+    log.warning("database degraded to temporary storage: %s", _one_line(exc))
+    start_recovery()
 
 
 def _turso_guard(call):
@@ -111,11 +166,20 @@ def _turso_guard(call):
     rescue the caller, so we only fall back after real repetition (three
     failures in a row). A hard, non-transient error (bad token, typo'd URL)
     still degrades immediately, exactly as before.
+
+    A migration-level SQL collision (duplicate column) is not a failure at
+    all: the database processed the statement, which is proof of health. It
+    resets the outage counter and is never recorded as the 'turso error'.
+    (Counting these was exactly the bug behind the false 'Turso unreachable'
+    degrade on an already-migrated database.)
     """
     global _turso_failures, _turso_ever_worked
     try:
         result = call()
     except Exception as exc:  # noqa: BLE001 — any failure counts
+        if _is_recoverable_sql_error(exc):
+            _turso_failures = 0
+            raise
         _turso_failures += 1
         _record_turso_error(exc)
         if _turso_failures >= 3 or (not _turso_ever_worked and not _is_transient(exc)):
@@ -222,6 +286,85 @@ def kick_warmer() -> None:
     start_warmer(force=True)
 
 
+# --------------------------------------------------------------------------
+# Automatic recovery (degraded -> Turso)
+# --------------------------------------------------------------------------
+# Degrading to /tmp must be a *state*, not a verdict. While the engine is
+# degraded but Turso is configured, a daemon thread probes the database every
+# ~30 s (and immediately when the request path wakes it) and flips the engine
+# back the moment the database answers — schema initialisation included. The
+# old behaviour (sticky until the next redeploy) is gone.
+
+RECOVERY_INTERVAL = 30.0
+_recovery_lock = threading.Lock()
+_recovery_thread: threading.Thread | None = None
+_recovery_wake = threading.Event()
+
+
+def recovery_active() -> bool:
+    return _recovery_thread is not None and _recovery_thread.is_alive()
+
+
+def _recovery_probe() -> bool:
+    """One attempt to flip back. True when the engine is on Turso again (or
+    was already there). Never raises — the probe is best-effort by design."""
+    global MODE, _db_warning, _turso_error, _turso_failures, _turso_ever_worked
+    if MODE == "turso":
+        return True
+    try:
+        _turso_run([("SELECT 1", ())])          # 1. reachable + auth ok
+    except Exception as exc:  # noqa: BLE001 — a failed probe just waits
+        log.debug("turso recovery probe failed: %s: %s",
+                  type(exc).__name__, exc)
+        return False
+    if not ensure_schema(force=True):           # 2. schema (idempotent)
+        return False
+    MODE = "turso"                              # 3. flip back
+    _db_warning = ""
+    _turso_error = ""
+    _turso_failures = 0
+    _turso_ever_worked = True
+    log.info("turso recovered — back on persistent storage")
+    return True
+
+
+def _recovery_loop() -> None:
+    while MODE != "turso":
+        try:
+            _recovery_probe()
+        except Exception:  # noqa: BLE001 — the loop must outlive probe bugs
+            log.debug("turso recovery probe crashed", exc_info=True)
+        _recovery_wake.wait(RECOVERY_INTERVAL)
+        _recovery_wake.clear()
+
+
+def start_recovery() -> bool:
+    """Start (or wake) the background recovery thread. Idempotent, non-blocking,
+    and a no-op unless Turso is configured and the engine is degraded."""
+    global _recovery_thread
+    if not TURSO_CONFIGURED or MODE == "turso":
+        return False
+    with _recovery_lock:
+        if _recovery_thread is not None and _recovery_thread.is_alive():
+            _recovery_wake.set()
+            return False
+        _recovery_thread = threading.Thread(target=_recovery_loop,
+                                            name="turso-recovery", daemon=True)
+        _recovery_thread.start()
+        log.info("turso recovery started (probe every %ss)", RECOVERY_INTERVAL)
+        return True
+
+
+def kick_recovery() -> None:
+    """Request-path hook: while degraded, make sure a recovery probe is coming.
+
+    Called from every public DB entry point; when degraded it only takes a
+    lock and checks thread liveness, so it adds no measurable latency.
+    """
+    if TURSO_CONFIGURED and MODE != "turso":
+        start_recovery()
+
+
 def status() -> dict:
     backend = "Turso (persistent)" if MODE == "turso" else (
         "Local SQLite file" if not ON_VERCEL else "Temporary storage (/tmp)")
@@ -241,6 +384,7 @@ def status() -> dict:
         "turso_error": _turso_error,
         "turso_warm": _turso_warm,
         "warmer_started": warmer_started(),
+        "recovery_active": recovery_active(),
         "schema": {"ready": _schema_ready, "error": _schema_error},
     }
 
@@ -513,24 +657,63 @@ SCHEMA = [
 ]
 
 
-def _safe_alter(sql: str) -> None:
-    """Add a column, ignoring 'duplicate column' errors. Works on both
-    SQLite and Turso (PRAGMA introspection is unreliable over HTTP)."""
+# Column migrations as (table, column, statement). The list is the single
+# source of truth for both the PRAGMA pre-check and the ALTER itself, so the
+# two can never drift apart.
+MIGRATIONS: list[tuple[str, str, str]] = [
+    ("users", "custom_instructions",
+     "ALTER TABLE users ADD COLUMN custom_instructions TEXT DEFAULT ''"),
+    ("users", "auto_memory",
+     "ALTER TABLE users ADD COLUMN auto_memory INTEGER DEFAULT 1"),
+    ("conversations", "folder",
+     "ALTER TABLE conversations ADD COLUMN folder TEXT DEFAULT ''"),
+    ("conversations", "pinned",
+     "ALTER TABLE conversations ADD COLUMN pinned INTEGER DEFAULT 0"),
+    ("users", "prefs",
+     "ALTER TABLE users ADD COLUMN prefs TEXT DEFAULT '{}'"),
+    ("decks", "audience",
+     "ALTER TABLE decks ADD COLUMN audience TEXT DEFAULT ''"),
+    ("decks", "tone",
+     "ALTER TABLE decks ADD COLUMN tone TEXT DEFAULT ''"),
+]
+
+
+def _column_exists(table: str, column: str) -> bool | None:
+    """PRAGMA table_info lookup: True/False when answerable, None when the
+    introspection itself failed (then the ALTER attempt decides the outcome)."""
+    try:
+        rows = _query_raw(f"PRAGMA table_info({table})", ())
+    except Exception:
+        return None
+    return any(str(row.get("name", "")).lower() == column.lower() for row in rows)
+
+
+def _add_column(table: str, column: str, sql: str) -> None:
+    """Idempotent ALTER TABLE ADD COLUMN.
+
+    1. Pre-check with PRAGMA table_info: the column is already there -> no-op.
+       On a database that a previous deploy migrated this is the normal path,
+       and it costs cheap introspection round-trips instead of seven errors.
+    2. Otherwise run the ALTER. A 'duplicate column name' error means another
+       init (a concurrent thread or another serverless instance) added the
+       column between the check and the ALTER — that is success, not a
+       failure, and it never counts as a Turso outage.
+    3. Any other error is re-raised: it is a real database problem.
+    """
+    if _column_exists(table, column) is True:
+        return
     try:
         _execute_raw(sql, ())
-    except Exception:
-        pass
+    except Exception as exc:
+        if "duplicate column name" in str(exc).lower():
+            return
+        raise
 
 
 def _run_migrations() -> None:
     """Idempotent column additions — safe to re-run after a schema rebuild."""
-    _safe_alter("ALTER TABLE users ADD COLUMN custom_instructions TEXT DEFAULT ''")
-    _safe_alter("ALTER TABLE users ADD COLUMN auto_memory INTEGER DEFAULT 1")
-    _safe_alter("ALTER TABLE conversations ADD COLUMN folder TEXT DEFAULT ''")
-    _safe_alter("ALTER TABLE conversations ADD COLUMN pinned INTEGER DEFAULT 0")
-    _safe_alter("ALTER TABLE users ADD COLUMN prefs TEXT DEFAULT '{}'")
-    _safe_alter("ALTER TABLE decks ADD COLUMN audience TEXT DEFAULT ''")
-    _safe_alter("ALTER TABLE decks ADD COLUMN tone TEXT DEFAULT ''")
+    for table, column, sql in MIGRATIONS:
+        _add_column(table, column, sql)
 
 
 def init_db() -> bool:
@@ -550,6 +733,11 @@ def init_db() -> bool:
 # DATABASE_URL — every request would otherwise fail with "no such table" and
 # the app would 500 forever. Instead we detect that class of error, rebuild
 # the schema, and retry the statement once.
+#
+# _schema_lock is the single serialiser for schema work: the import-time
+# init, the warmer's first probe, and every concurrent first request all
+# funnel through ensure_schema(), so migrations run at most once per
+# database state even when all of them arrive at the same instant.
 
 _SCHEMA_MARKERS = ("no such table", "no such column", "does not exist",
                    "unknown column", "no such index")
@@ -600,12 +788,14 @@ def _with_schema_retry(call):
 def query(sql: str, params: Sequence[Any] = ()) -> list[dict]:
     if not _schema_ready:
         ensure_schema()
+    kick_recovery()
     return _with_schema_retry(lambda: _query_raw(sql, params))
 
 
 def execute(sql: str, params: Sequence[Any] = ()) -> dict:
     if not _schema_ready:
         ensure_schema()
+    kick_recovery()
     return _with_schema_retry(lambda: _execute_raw(sql, params))
 
 
@@ -615,6 +805,7 @@ def execute_many(statements: Iterable[tuple[str, Sequence[Any]]]) -> None:
         return
     if not _schema_ready:
         ensure_schema()
+    kick_recovery()
     _with_schema_retry(lambda: _execute_many_raw(stmts))
 
 

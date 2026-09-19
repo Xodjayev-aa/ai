@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
-from app.db.engine import kick_warmer, start_warmer
+from app.db.engine import kick_warmer, start_recovery, start_warmer
 
 # Never let a broken database stop the app from booting: the UI shows an
 # honest storage banner and the engine retries the schema on first use.
@@ -18,6 +18,10 @@ if not init_db():
 # failed": warm it in the background (SELECT 1 at ~0/5/15/30/60 s) so the
 # first real query is not also the first round-trip. Never blocks boot.
 start_warmer()
+
+# If boot degraded to /tmp while Turso is configured, start probing for its
+# return (every ~30 s). No-op when Turso is healthy or not configured.
+start_recovery()
 
 app = FastAPI(title="Aether PWA API", version="4.0.0")
 
@@ -78,8 +82,13 @@ app.include_router(voice.router)
 app.include_router(usage.router)
 app.include_router(teach.router)
 
-# Serve the PWA directly from the API for local dev (python run.py).
-# On Vercel, static hosting + route rules handle this instead.
+# Serve the PWA from the API process itself. This is the ONLY serving path:
+# locally (python run.py) and on Vercel, where vercel.json routes every
+# request — including /assets/* and /icons/* — to this function. Keeping one
+# code path means what the tests verify is exactly what production serves
+# (the platform's static layer 500'd on /icons/* in prod while every local
+# and CI check of the files passed — so the files are no longer on the
+# platform's path at all).
 _FRONTEND = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
 if os.path.isdir(_FRONTEND):
     from fastapi.staticfiles import StaticFiles
