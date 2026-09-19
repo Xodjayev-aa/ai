@@ -401,11 +401,22 @@ def test_images(c: httpx.Client, base: str) -> None:
     R.add("image request", bool(url), f"{time.time() - t0:.1f}s")
     if not url:
         return
-    try:
-        img = c.get(url)
-    except Exception as exc:  # noqa: BLE001 — a network hiccup must not abort the run
-        R.add("image bytes returned", False, f"{type(exc).__name__}: {exc}"[:160])
-        return
+    # The app only hands back a provider URL; the fetch goes straight to the
+    # free tier, which flaps (500 + JSON error page). Retry the fetch so one
+    # provider hiccup doesn't fail the run — a cold generation can also take
+    # 10-30s by design.
+    img = None
+    for attempt in range(3):
+        try:
+            img = c.get(url)
+        except Exception as exc:  # noqa: BLE001 — a network hiccup must not abort the run
+            R.add("image bytes returned", False, f"{type(exc).__name__}: {exc}"[:160])
+            return
+        ctype = img.headers.get("content-type", "")
+        if (img.status_code == 200 and len(img.content) > 4000
+                and ctype.startswith("image/")):
+            break
+        time.sleep(5 * (attempt + 1))
     ctype = img.headers.get("content-type", "")
     R.add("image bytes returned",
           img.status_code == 200 and len(img.content) > 4000 and ctype.startswith("image/"),
