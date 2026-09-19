@@ -123,6 +123,9 @@ def _looks_like_misconfiguration(exc: Exception) -> bool:
         "401 unauthorized",
         "403 forbidden",
         "404 not found",
+        "turso http 401",
+        "turso http 403",
+        "turso http 404",
         "name or service not known",          # DNS: typo'd URL
         "failed to resolve",
         "temporary failure in name resolution",
@@ -432,19 +435,19 @@ def _encode_arg(value: Any) -> dict:
     if value is None:
         return {"type": "null", "value": None}
     if isinstance(value, bool):
-        return {"type": "integer", "value": 1 if value else 0}
+        return {"type": "integer", "value": "1" if value else 0}
     if isinstance(value, int):
-        return {"type": "integer", "value": value}
+        return {"type": "integer", "value": str(value)}
     if isinstance(value, float):
-        return {"type": "float", "value": value}
+        return {"type": "float", "value": str(value)}
     if isinstance(value, (bytes, bytearray)):
-        return {"type": "blob", "value": base64.b64encode(bytes(value)).decode()}
+        return {"type": "blob", "base64": base64.b64encode(bytes(value)).decode()}
     return {"type": "text", "value": str(value)}
 
 
 def _decode_cell(cell: dict) -> Any:
     ctype = cell.get("type")
-    value = cell.get("value")
+    value = cell.get("value", cell.get("base64"))
     if ctype == "null" or value is None:
         return None
     if ctype == "integer":
@@ -478,6 +481,8 @@ def _parse_pipeline_response(payload: dict) -> list[dict]:
         if item.get("type") != "ok":
             raise RuntimeError(f"Turso unexpected result: {item}")
         resp = item.get("response", {})
+        if resp.get("type") == "close":
+            continue
         result = resp.get("result", resp if "rows" in resp else {})
         cols = [c.get("name") for c in result.get("cols", [])]
         rows = [
@@ -487,6 +492,8 @@ def _parse_pipeline_response(payload: dict) -> list[dict]:
         rowid = result.get("last_insert_rowid")
         if isinstance(rowid, dict):
             rowid = _decode_cell(rowid)
+        if isinstance(rowid, str) and rowid.strip().lstrip("-").isdigit():
+            rowid = int(rowid)
         results.append({
             "rows": rows,
             "cols": cols,
@@ -516,7 +523,9 @@ def _turso_run(statements: list[tuple[str, Sequence[Any]]]) -> list[dict]:
                 "Content-Type": "application/json",
             },
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            detail = (resp.text or "").strip()[:300]
+            raise RuntimeError(f"Turso HTTP {resp.status_code}: {detail or 'no body'}")
         return _parse_pipeline_response(resp.json())
 
 
