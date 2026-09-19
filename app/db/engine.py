@@ -24,16 +24,24 @@ from typing import Any, Iterable, Sequence
 
 TURSO_URL = (os.getenv("TURSO_DATABASE_URL") or "").strip().rstrip("/")
 TURSO_TOKEN = (os.getenv("TURSO_AUTH_TOKEN") or "").strip()
+TURSO_CONFIGURED = bool(TURSO_URL and TURSO_TOKEN)
+ON_VERCEL = bool(os.getenv("VERCEL"))
 
-if TURSO_URL:
+if TURSO_URL and TURSO_URL.startswith("libsql://"):
     # Accept libsql:// URLs too and convert to HTTPS for the HTTP API.
-    if TURSO_URL.startswith("libsql://"):
-        TURSO_URL = "https://" + TURSO_URL[len("libsql://"):]
+    TURSO_URL = "https://" + TURSO_URL[len("libsql://"):]
+
+if TURSO_CONFIGURED:
     PIPELINE_URL = TURSO_URL + "/v2/pipeline"
     MODE = "turso"
 else:
     PIPELINE_URL = ""
     MODE = "sqlite"
+    if TURSO_URL and not TURSO_TOKEN:
+        _partial_turso = ("TURSO_DATABASE_URL is set but TURSO_AUTH_TOKEN is "
+                          "missing — using temporary storage.")
+    else:
+        _partial_turso = ""
 
 SQLITE_PATH = (
     os.getenv("DATABASE_URL", "/tmp/aether.db" if os.getenv("VERCEL") else "aether.db")
@@ -42,6 +50,67 @@ SQLITE_PATH = (
 )
 
 _write_lock = threading.Lock()
+
+# --------------------------------------------------------------------------
+# Runtime health
+# --------------------------------------------------------------------------
+# A misconfigured Turso (wrong token, typo'd URL) must never turn the whole app
+# into a 500 machine: we detect it on the first query, fall back to local
+# SQLite for the lifetime of this instance, and report an honest warning that
+# the UI shows as a banner.
+_turso_failures = 0
+_turso_ever_worked = False
+_turso_error = ""
+_db_warning = _partial_turso
+
+
+def _degrade_to_sqlite(exc: Exception) -> None:
+    global MODE, _db_warning, _turso_error
+    _turso_error = f"{type(exc).__name__}: {exc}"[:300]
+    if MODE == "turso":
+        MODE = "sqlite"
+        _db_warning = (
+            "Turso is configured but unreachable — falling back to temporary "
+            "storage. Data may not persist until TURSO_DATABASE_URL / "
+            "TURSO_AUTH_TOKEN are fixed."
+        )
+
+
+def _turso_guard(call):
+    """Run a Turso call; degrade to SQLite when Turso never works or keeps failing."""
+    global _turso_failures, _turso_ever_worked
+    try:
+        result = call()
+    except Exception as exc:  # noqa: BLE001 — any failure counts
+        _turso_failures += 1
+        if not _turso_ever_worked or _turso_failures >= 3:
+            _degrade_to_sqlite(exc)
+        raise
+    _turso_failures = 0
+    _turso_ever_worked = True
+    return result
+
+
+def is_persistent() -> bool:
+    """True when data survives a cold start of the serverless instance."""
+    return MODE == "turso" or not ON_VERCEL
+
+
+def status() -> dict:
+    backend = "Turso (persistent)" if MODE == "turso" else (
+        "Local SQLite file" if not ON_VERCEL else "Temporary storage (/tmp)")
+    warning = _db_warning
+    if not TURSO_CONFIGURED and ON_VERCEL:
+        warning = ("No Turso configured — accounts and chats are stored in "
+                   "temporary storage and can disappear when the app restarts.")
+    return {
+        "mode": MODE,
+        "label": backend,
+        "persistent": is_persistent(),
+        "warning": warning,
+        "turso_configured": TURSO_CONFIGURED,
+        "turso_error": _turso_error,
+    }
 
 # --------------------------------------------------------------------------
 # Local SQLite helpers
@@ -181,13 +250,13 @@ def _turso_run(statements: list[tuple[str, Sequence[Any]]]) -> list[dict]:
 
 def query(sql: str, params: Sequence[Any] = ()) -> list[dict]:
     if MODE == "turso":
-        return _turso_run([(sql, params)])[0]["rows"]
+        return _turso_guard(lambda: _turso_run([(sql, params)])[0]["rows"])
     return _sqlite_query(sql, params)
 
 
 def execute(sql: str, params: Sequence[Any] = ()) -> dict:
     if MODE == "turso":
-        r = _turso_run([(sql, params)])[0]
+        r = _turso_guard(lambda: _turso_run([(sql, params)])[0])
         return {"affected": r["affected"], "last_insert_rowid": r["last_insert_rowid"]}
     return _sqlite_execute(sql, params)
 
@@ -197,7 +266,7 @@ def execute_many(statements: Iterable[tuple[str, Sequence[Any]]]) -> None:
     if not stmts:
         return
     if MODE == "turso":
-        _turso_run(stmts)
+        _turso_guard(lambda: _turso_run(stmts))
         return
     with _write_lock:
         conn = _local_connect()
@@ -283,6 +352,20 @@ SCHEMA = [
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS decks (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        subtitle TEXT DEFAULT '',
+        topic TEXT DEFAULT '',
+        outline TEXT NOT NULL,
+        status TEXT DEFAULT 'planning',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_decks_user ON decks (user_id, updated_at)",
     """
     CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,

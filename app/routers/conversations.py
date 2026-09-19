@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from app.database import (
     create_conversation, delete_conversation, get_conversation,
     list_conversations, list_messages, rename_conversation, search_messages,
-    update_conv_meta,
+    truncate_from_message, update_conv_meta,
 )
 from app.deps import get_current_user
 
@@ -69,6 +69,25 @@ def rename(conv_id: str, data: ConvRename, user=Depends(get_current_user)):
     update_conv_meta(conv_id, user["id"], title=data.title,
                      folder=data.folder, pinned=data.pinned)
     return {"status": "success"}
+
+
+class TruncateBody(BaseModel):
+    message_id: str = Field(min_length=8, max_length=64)
+
+
+@router.post("/{conv_id}/truncate")
+def truncate(conv_id: str, data: TruncateBody,
+             user=Depends(get_current_user)):
+    """Rewind a conversation: delete one message and everything after it.
+
+    Powers "Edit" on your own last message — the client truncates to that
+    point and re-sends the edited text, so the thread stays honest.
+    """
+    conv = get_conversation(conv_id, user["id"])
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    removed = truncate_from_message(conv_id, user["id"], data.message_id)
+    return {"status": "ok", "removed": removed}
 
 
 @router.get("/{conv_id}/export")

@@ -26,6 +26,26 @@ EDITOR_PROMPT = (
     "- Do not add commentary about editing — just output the final answer"
 )
 
+VOICE_MODE_PROMPT = (
+    "VOICE CALL MODE — the user is talking to you out loud and hearing your "
+    "reply through a speaker:\n"
+    "- Answer in 1-4 short sentences of natural spoken English. Contractions "
+    "are good. Sound like a helpful friend on a call, never like a manual.\n"
+    "- Never use markdown: no headings, bullets, numbered lists, tables, code "
+    "fences, emoji, asterisks or URLs. They are read aloud badly.\n"
+    "- If the answer really needs steps, links or code, say the key point in "
+    "one spoken sentence and finish with something like \"I put the details "
+    "in the chat.\"\n"
+    "- Do not read out raw numbers you cannot say naturally; round them.\n"
+    "- If you did not understand the audio, ask one short clarifying question."
+)
+
+SPEECH_CLEANUP = (
+    "Rewrite the following assistant answer so it can be read aloud by a "
+    "voice assistant: no markdown, no lists, no code, no URLs, no emoji, "
+    "plain conversational sentences, maximum four sentences, keep every fact."
+)
+
 REASONING_PROMPT = (
     "Before answering, reason through the problem privately and carefully: "
     "consider alternative interpretations, verify your logic, check for "
@@ -103,13 +123,38 @@ async def polish_answer(question: str, draft: str,
 
 
 def build_system_prompt(system_prefix: str = "",
-                        reasoning: bool = False) -> str:
-    parts = [SYSTEM_PROMPT]
+                        reasoning: bool = False,
+                        voice: bool = False) -> str:
+    parts = [SYSTEM_PROMPT if not voice else
+             ("You are Aether, a friendly, accurate voice assistant. " + SYSTEM_PROMPT)]
     if system_prefix:
         parts.append(system_prefix.strip())
-    if reasoning:
+    if voice:
+        parts.append(VOICE_MODE_PROMPT)
+    if reasoning and not voice:
         parts.append(REASONING_PROMPT)
     return "\n\n".join(p for p in parts if p)
+
+
+_SPEECH_JUNK = re.compile(
+    r"```[\s\S]*?```|`([^`]*)`|\*\*([^*]*)\*\*|__([^_]*)__|\*([^*\n]*)\*|"
+    r"^#{1,6}\s*|^\s*[-*•]\s+|^\s*\d+[.)]\s+|\[[^\]]*\]\([^)]*\)|"
+    r"https?://\S+|[|>]|\u2022",
+    re.MULTILINE)
+
+
+def speechify(text: str, *, max_sentences: int = 5) -> str:
+    """Turn a markdown answer into something that sounds human when spoken."""
+    out = _SPEECH_JUNK.sub(lambda m: m.group(1) or m.group(2) or m.group(3)
+                           or m.group(4) or " ", text)
+    out = re.sub(r"[ \t]+", " ", out)
+    out = re.sub(r"\n{2,}", ". ", out)
+    out = re.sub(r"\n", " ", out)
+    out = re.sub(r"\s+([,.!?;:])", r"\1", out)
+    out = re.sub(r"(\.[ \t]*){2,}", ". ", out)
+    out = out.strip(" .") + "."
+    parts = re.split(r"(?<=[.!?])\s+", out)
+    return " ".join(parts[:max_sentences]).strip()
 
 
 async def extract_facts(question: str, answer: str) -> list[str]:
@@ -139,6 +184,8 @@ async def smart_answer(
     system_prefix: str = "",
     reasoning: bool = False,
     user_content: str | list | None = None,
+    voice: bool = False,
+    max_tokens: int | None = None,
 ) -> typing.AsyncIterator[dict]:
     """`question` is plain text (used for heuristics/polish/memory);
     `user_content` optionally overrides the draft user message (e.g. for
@@ -156,10 +203,11 @@ async def smart_answer(
     try:
         async for delta in client.stream_chat(
             [{"role": "system",
-              "content": build_system_prompt(system_prefix, reasoning)},
+              "content": build_system_prompt(system_prefix, reasoning, voice)},
              *history,
              {"role": "user", "content": user_content or question}],
-            fast=fast and not reasoning,
+            fast=(fast or voice) and not reasoning,
+            max_tokens=max_tokens or (260 if voice else None),
             used=used_keys,
         ):
             draft_chunks.append(delta)
@@ -168,6 +216,10 @@ async def smart_answer(
         yield {"type": "error", "detail": str(exc)}
         return
     draft = "".join(draft_chunks)
+    if voice:
+        # Spoken replies never get a second pass: latency is the feature.
+        yield {"type": "final", "text": speechify(draft), "polished": False}
+        return
 
     # ---- Stage 2: polish (only when it matters)
     if should_polish(question, draft, force=force_polish):

@@ -7,7 +7,7 @@ from app.database import init_db
 
 init_db()
 
-app = FastAPI(title="Aether PWA API", version="2.0.0")
+app = FastAPI(title="Aether PWA API", version="4.0.0")
 
 _origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 _wildcard = "*" in _origins
@@ -23,7 +23,8 @@ app.add_middleware(
 )
 
 from app.routers import admin, auth, chat, conversations, files, health, \
-    images, news, presentations, research, settings, share, tasks, voice  # noqa: E402
+    images, news, presentations, research, settings, share, tasks, teach, \
+    usage, voice  # noqa: E402
 
 app.include_router(auth.router)
 app.include_router(chat.router)
@@ -41,6 +42,8 @@ app.include_router(news.router)
 app.include_router(tasks.router)
 app.include_router(tasks.cron_router)
 app.include_router(voice.router)
+app.include_router(usage.router)
+app.include_router(teach.router)
 
 # Serve the PWA directly from the API for local dev (python run.py).
 # On Vercel, static hosting + route rules handle this instead.

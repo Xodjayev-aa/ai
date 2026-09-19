@@ -8,9 +8,9 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.database import (
-    create_persona, delete_memory, delete_persona, get_auto_memory,
+    add_memory, create_persona, delete_memory, delete_persona, get_auto_memory,
     get_custom_instructions, list_conversations, list_memories, list_messages,
-    list_personas, set_auto_memory, set_custom_instructions,
+    list_personas, set_auto_memory, set_custom_instructions, update_memory,
 )
 from app.deps import get_current_user
 
@@ -52,6 +52,25 @@ def memory_auto(body: AutoMemoryBody, user=Depends(get_current_user)):
     return {"status": "success", "auto": body.enabled}
 
 
+class MemoryBody(BaseModel):
+    content: str = Field(min_length=2, max_length=300)
+
+
+@router.post("/memory")
+def memory_create(body: MemoryBody, user=Depends(get_current_user)):
+    """Used by Teach mode and by the "add a memory" field in Settings."""
+    add_memory(user["id"], body.content)
+    return {"status": "saved", "memories": list_memories(user["id"])}
+
+
+@router.patch("/memory/{memory_id}")
+def memory_update(memory_id: str, body: MemoryBody,
+                  user=Depends(get_current_user)):
+    if update_memory(memory_id, user["id"], body.content) == 0:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"status": "updated", "content": body.content.strip()[:300]}
+
+
 @router.delete("/memory/{memory_id}")
 def memory_delete(memory_id: str, user=Depends(get_current_user)):
     if delete_memory(memory_id, user["id"]) == 0:
@@ -89,13 +108,25 @@ def personas_delete(persona_id: str, user=Depends(get_current_user)):
 
 @router.get("/export")
 def export_all(user=Depends(get_current_user)):
+    """Everything the account holds: chats, personas, memories, settings."""
     convs = list_conversations(user["id"], limit=500)
     data = []
     for c in convs:
         data.append({"title": c["title"], "created_at": c["created_at"],
+                     "folder": c.get("folder"), "pinned": bool(c.get("pinned")),
                      "messages": list_messages(c["id"], user["id"])})
-    payload = json.dumps({"account": user["email"], "conversations": data},
-                         ensure_ascii=False, indent=1)
+    payload = json.dumps({
+        "account": user["email"],
+        "exported_at": __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc).isoformat(),
+        "settings": {
+            "custom_instructions": get_custom_instructions(user["id"]),
+            "long_term_memory": get_auto_memory(user["id"]),
+        },
+        "memories": list_memories(user["id"]),
+        "personas": list_personas(user["id"]),
+        "conversations": data,
+    }, ensure_ascii=False, indent=1)
     return Response(content=payload, media_type="application/json",
                     headers={"Content-Disposition":
                              'attachment; filename="aether-export.json"'})

@@ -1,4 +1,4 @@
-from app.db.engine import init_db, query, execute, execute_many
+from app.db.engine import init_db, query, execute, execute_many, status as db_status
 from app.db.sqlite_store import (
     add_message,
     add_memory,
@@ -46,10 +46,20 @@ from app.db.sqlite_store import (
     touch_conversation,
     update_password,
     usage_stats,
+    update_memory,
+    last_assistant_message,
+    delete_message,
+    truncate_from_message,
+    upsert_message,
+    create_deck,
+    get_deck,
+    save_deck_outline,
+    list_decks,
+    delete_deck,
 )
 
 __all__ = [
-    "init_db", "query", "execute", "execute_many",
+    "init_db", "query", "execute", "execute_many", "db_status",
     "create_user", "get_user_by_email", "get_user_by_id", "count_users",
     "create_conversation", "list_conversations", "get_conversation",
     "rename_conversation", "touch_conversation", "update_password", "delete_conversation",
@@ -61,4 +71,7 @@ __all__ = [
     "update_conv_meta", "get_conv_any",
     "add_message", "list_messages",
     "bump_usage", "get_usage", "usage_stats",
+    "update_memory", "last_assistant_message", "delete_message",
+    "truncate_from_message", "upsert_message",
+    "create_deck", "get_deck", "save_deck_outline", "list_decks", "delete_deck",
 ]
