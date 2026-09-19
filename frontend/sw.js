@@ -7,7 +7,7 @@
  *  - Pre-caching uses allSettled: a single missing file must never break the
  *    install (a failed `addAll` leaves the app with no service worker at all).
  */
-const CACHE = "aether-v12";
+const CACHE = "aether-v13";
 // Exactly the static shell that ships in frontend/ (plus "/" for navigations):
 // every path below exists in the repo, and every shipped shell file is listed.
 const SHELL = [

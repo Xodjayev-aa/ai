@@ -2,14 +2,15 @@
 """Generate the Aether icon set from the rounded-A monogram mark.
 
 The mark is a single geometric "A" — two round-capped strokes plus a crossbar,
-accent #9aa0f5 on the dark #1e1e21 plate. Same construction at every size, so
-it stays legible at 16px (the tab icon) and calm at 512px (the PWA splash).
+monochrome white #f5f6f7 on near-black #16181d plate. Same construction at
+every size, so it stays legible at 16px (the tab icon) and calm at 512px (the
+PWA splash).
 
 Geometry (identical to icons/favicon.svg and the inline SVG in index.html):
 
     plate    rounded rect 0,0 24x24, rx = 5.4
-    ascent   5.4,19.8 -> 12,4.2 -> 18.6,19.8   (stroked, round caps + joins)
-    crossbar 8.1,14.6 -> 15.9,14.6
+    ascent   5.2,19.4 -> 12,4.6 -> 18.8,19.4   (stroked, round caps + joins)
+    crossbar 8.1,14.8 -> 15.9,14.8            stroke-width 2.4
 
 Every raster is drawn at an integer supersample factor (up to 64x for the small
 sizes, capped so the working canvas stays around 4096px) and finished with
@@ -26,14 +27,14 @@ import pathlib
 
 from PIL import Image, ImageDraw
 
-BG = (30, 30, 33, 255)          # --bg0 #1e1e21
-ACCENT = (154, 160, 245, 255)   # #9aa0f5
+BG = (22, 24, 29, 255)          # #16181d near-black
+FG = (245, 246, 247, 255)       # #f5f6f7 white glyph
 
 PLATE_RADIUS = 5.4 / 24.0       # rx as a fraction of the square
-STROKE = 2.6                    # stroke width in the 24x24 space
+STROKE = 2.4                    # stroke width in the 24x24 space
 
-ASCENT = [(5.4, 19.8), (12.0, 4.2), (18.6, 19.8)]   # left stem, apex, right stem
-CROSSBAR = [(8.1, 14.6), (15.9, 14.6)]
+ASCENT = [(5.2, 19.4), (12.0, 4.6), (18.8, 19.4)]   # left stem, apex, right stem
+CROSSBAR = [(8.1, 14.8), (15.9, 14.8)]
 
 try:                            # Pillow >= 9.1
     LANCZOS = Image.Resampling.LANCZOS
@@ -79,8 +80,8 @@ def mark_image(size: int, *, plate: bool = True, mark_scale: float = 1.0,
     draw = ImageDraw.Draw(img)
     ascent = [(x * unit, y * unit) for x, y in _scale(ASCENT, mark_scale)]
     crossbar = [(x * unit, y * unit) for x, y in _scale(CROSSBAR, mark_scale)]
-    _stroke(draw, ascent, STROKE * unit, ACCENT)
-    _stroke(draw, crossbar, STROKE * unit, ACCENT)
+    _stroke(draw, ascent, STROKE * unit, FG)
+    _stroke(draw, crossbar, STROKE * unit, FG)
 
     return img.resize((size, size), LANCZOS)
 
