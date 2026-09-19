@@ -207,6 +207,11 @@ window.speechSynthesis = {
   getVoices: () => window.__voices || [],
 };
 window.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
+const vvListeners = {};
+window.visualViewport = {
+  height: 800, offsetTop: 0,
+  addEventListener: (type, fn) => { (vvListeners[type] ||= []).push(fn); },
+};
 window.URL.createObjectURL = () => "blob:fake";
 window.URL.revokeObjectURL = () => {};
 window.Audio = class {
@@ -387,6 +392,16 @@ async function run() {
   check("countdown actually counts down",
         banner && banner.textContent !== firstCountdown,
         `${firstCountdown} → ${banner?.textContent}`);
+
+  // ── mobile keyboard: the composer must lift by the keyboard height ──
+  const kb = () => window.document.documentElement.style.getPropertyValue("--kb");
+  check("no keyboard → no composer lift", kb() === "0px", kb());
+  window.visualViewport.height = 430;
+  (vvListeners.resize || []).forEach((fn) => fn());
+  check("keyboard open lifts the composer by its height", kb() === "338px", kb());
+  window.visualViewport.height = 790;                   // browser chrome only
+  (vvListeners.resize || []).forEach((fn) => fn());
+  check("a small chrome shift is ignored", kb() === "0px", kb());
 
   // ── offline handling ────────────────────────────────────────────────
   window.dispatchEvent(new window.Event("offline"));

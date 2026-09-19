@@ -71,9 +71,19 @@ def _quota(user) -> dict:
 
 
 def _build_context_prefix(user, persona_id: str | None,
-                          teach_instruction: str | None = None) -> tuple[str, bool]:
-    """Custom instructions + long-term memory + persona -> system prefix."""
+                          teach_instruction: str | None = None,
+                          voice: bool = False) -> tuple[str, bool]:
+    """Custom instructions + long-term memory + persona + preferences -> prefix.
+
+    Preferences contribute the language clause, the language-style clause and
+    (in voice mode) the exam-examiner persona, so chat and voice stay in sync.
+    """
     parts, used_memory = [], False
+    from app.preferences import prompt_clauses
+    prefs = get_prefs(user["id"])
+    clauses = prompt_clauses(prefs, voice=voice)
+    if clauses:
+        parts.append(clauses)
     instr = get_custom_instructions(user["id"])
     if instr:
         parts.append(f"The user's standing instructions (always apply):\n{instr}")
@@ -137,7 +147,8 @@ async def stream_chat(data: ChatPayload, request: Request,
         raise HTTPException(status_code=400, detail="Message is required")
 
     history = _history_for(data, user)
-    prefix, _ = _build_context_prefix(user, data.persona_id, data.teach_instruction)
+    prefix, _ = _build_context_prefix(user, data.persona_id, data.teach_instruction,
+                                      voice=bool(data.voice))
 
     # The assistant row exists from the start so a stopped answer is still a
     # real, resumable message in the conversation.

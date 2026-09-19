@@ -406,6 +406,7 @@ def _run_migrations() -> None:
     _safe_alter("ALTER TABLE users ADD COLUMN auto_memory INTEGER DEFAULT 1")
     _safe_alter("ALTER TABLE conversations ADD COLUMN folder TEXT DEFAULT ''")
     _safe_alter("ALTER TABLE conversations ADD COLUMN pinned INTEGER DEFAULT 0")
+    _safe_alter("ALTER TABLE users ADD COLUMN prefs TEXT DEFAULT '{}'")
     _safe_alter("ALTER TABLE decks ADD COLUMN audience TEXT DEFAULT ''")
     _safe_alter("ALTER TABLE decks ADD COLUMN tone TEXT DEFAULT ''")
 

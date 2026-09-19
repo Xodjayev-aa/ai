@@ -1,4 +1,5 @@
 from app.db.engine import init_db, query, execute, execute_many, status as db_status
+from app.db.sqlite_store import get_prefs, set_prefs
 from app.db.sqlite_store import (
     add_message,
     add_memory,
@@ -60,6 +61,7 @@ from app.db.sqlite_store import (
 
 __all__ = [
     "init_db", "query", "execute", "execute_many", "db_status",
+    "get_prefs", "set_prefs",
     "create_user", "get_user_by_email", "get_user_by_id", "count_users",
     "create_conversation", "list_conversations", "get_conversation",
     "rename_conversation", "touch_conversation", "update_password", "delete_conversation",

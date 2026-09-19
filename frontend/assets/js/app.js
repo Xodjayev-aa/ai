@@ -118,7 +118,7 @@
       pill.className = `pill ${cooling ? "warn" : "ok"}`;
       pill.innerHTML = `${A.icon("bolt", 12)}<span>${cooling ? "Cooling down" : "Free AI ready"}</span>`;
       pill.title = [
-        "Keyless free tier — no accounts, no API keys.",
+        "Keyless free tier — no API keys, nothing to pay.",
         `Database: ${data.database?.label || data.database_mode}`,
         `Queue: ${queue.queued_requests || 0} waiting · interval ${queue.interval_seconds || 5}s`,
         data.database?.warning || "",
@@ -145,6 +145,26 @@
 
   // Exposed for tests (tests/frontend-smoke.mjs) — harmless in production.
   A.__testCooldown = (seconds) => showCooldownBanner(seconds);
+
+  /* Mobile keyboards: on iOS the visual viewport shrinks while the layout
+     viewport (and 100vh) do not, so the composer ends up hidden behind the
+     keyboard. We expose the overlap as --kb and let CSS lift the composer.
+     Chrome/Android gets `interactive-widget=resizes-content` instead. */
+  function initKeyboardHandling() {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const apply = () => {
+      const overlap = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      // Ignore browser-chrome shifts; only a real keyboard is this tall.
+      document.documentElement.style.setProperty("--kb", `${overlap > 90 ? Math.round(overlap) : 0}px`);
+      if (overlap > 90 && document.activeElement === $("#chat-input")) A.scrollToBottom();
+    };
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+    $("#chat-input")?.addEventListener("focus", () => setTimeout(apply, 250));
+    $("#chat-input")?.addEventListener("blur", () => setTimeout(apply, 150));
+    apply();
+  }
 
   function showCooldownBanner(seconds) {
     const banner = $("#cooldown-banner");
@@ -284,6 +304,7 @@
         $("#tools-menu")?.classList.add("hidden");
       }
     });
+    initKeyboardHandling();
     window.addEventListener("online", () => { $("#offline-note")?.classList.add("hidden"); A.refreshUsage(); });
     window.addEventListener("offline", () => $("#offline-note")?.classList.remove("hidden"));
   }
