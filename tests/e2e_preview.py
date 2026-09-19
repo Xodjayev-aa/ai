@@ -133,17 +133,41 @@ def test_static(c: httpx.Client, base: str) -> None:
     manifest = c.get(f"{base}/manifest.json")
     R.add("manifest served", manifest.status_code == 200)
 
+    # The production hotfix under test: the browser's tab icon must be a real
+    # SVG with the right content-type. (On prod the platform's static layer
+    # 500'd on the whole /icons/* directory while every local check passed;
+    # the shell now rides on the API function's static mount, so this exact
+    # request is what the deploy must answer.)
+    fav = c.get(f"{base}/icons/favicon.svg")
+    R.add("favicon.svg served as image/svg+xml",
+          fav.status_code == 200 and "image/svg+xml" in fav.headers.get("content-type", ""),
+          f"{fav.status_code} {fav.headers.get('content-type', '?')} {len(fav.content)} bytes")
+
     # Every asset the shell references must exist: scrape index.html instead of
     # hard-coding filenames, so a refactor cannot leave a dead link behind.
+    # Content-type is asserted too: a wrong type for .svg/.css/.js breaks the
+    # shell in ways a 200 status alone would not show.
     import re
+    ctype_expect = {
+        ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".css": "text/css",
+        ".js": "javascript",
+        ".json": "application/json",
+        ".html": "text/html",
+    }
     refs = sorted(set(re.findall(r'(?:src|href)="(/assets/[^"]+|/icons/[^"]+)"', html)))
     missing = []
     total = 0
     for ref in refs:
         asset = c.get(f"{base}{ref}")
         total += len(asset.content)
-        if asset.status_code != 200 or not asset.content:
-            missing.append(f"{ref} ({asset.status_code})")
+        ext = ref.rsplit(".", 1)[-1]
+        want = ctype_expect.get("." + ext, "")
+        got = asset.headers.get("content-type", "")
+        if (asset.status_code != 200 or not asset.content
+                or (want and want not in got)):
+            missing.append(f"{ref} ({asset.status_code}, {got or 'no type'})")
     R.add(f"every shell asset served ({len(refs)} files)", not missing,
           ", ".join(missing) if missing else f"{total // 1024} KB total")
     for name in ("core.js", "chat.js", "voice.js", "slides.js", "images.js",
@@ -496,6 +520,23 @@ def test_status(c: httpx.Client, base: str) -> None:
         R.warn("HD TTS status", json.dumps(hd))
     else:
         R.warn("HD TTS status", "not reported by /api/ai/status")
+    # Turso health — soft by design: the engine degrades to /tmp by contract
+    # when the database is down, so a degraded status is a finding, not a
+    # failed run. The line always lands in the report when Turso is
+    # configured, so a post-deploy check of the run log answers "is prod on
+    # persistent storage?" in one look.
+    db = data.get("database") or {}
+    if db.get("turso_configured"):
+        detail = (f"mode={db.get('mode')} persistent={db.get('persistent')} "
+                  f"warm={db.get('turso_warm')} "
+                  f"recovery_active={db.get('recovery_active')} "
+                  f"schema={ (db.get('schema') or {}).get('ready') }")
+        if not db.get("persistent"):
+            detail += (f" warning={db.get('warning')!r} "
+                       f"turso_error={db.get('turso_error')!r}")
+            R.warn("Turso database (DEGRADED — data on temporary storage)", detail)
+        else:
+            R.warn("Turso database (persistent)", detail)
 
 
 def main() -> int:
