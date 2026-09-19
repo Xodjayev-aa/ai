@@ -381,8 +381,8 @@
           <span class="muted small-text">Speed <b id="call-speed-value">1.0×</b></span>
           <input id="call-speed" type="range" min="0.7" max="1.4" step="0.05">
         </label>
-        <p class="muted tiny" id="call-hint">Free shared voice servers can have short waits. If they are
-          busy, Aether uses your device's best neural voice.</p>
+        <p class="muted tiny" id="call-hint">If the voice servers are busy, Aether uses your
+          device's best neural voice.</p>
       </div>`;
     document.body.append(root);
     els.root = root;
@@ -686,7 +686,7 @@
             if (content) content.innerHTML = A.markdown(spoken || sentenceBuffer);
             A.emit("usage:refresh");
           } else if (event.type === "phase" && event.phase === "queued") {
-            setStatus(`Free AI is shared — about ${Math.round(event.wait_seconds)}s wait`);
+            setStatus(`Free AI — about ${Math.round(event.wait_seconds)}s wait`);
           } else if (event.type === "error") {
             stopped = true;
             setStatus("The free AI is unavailable — try again");

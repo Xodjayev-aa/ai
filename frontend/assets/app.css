@@ -168,7 +168,7 @@ textarea { resize: none; line-height: 1.5; }
   background: var(--bg2); border: 1px solid var(--line);
 }
 .brand-mark.small { width: 28px; height: 28px; border-radius: 9px; }
-.brand-mark svg { width: 20px; height: 20px; fill: #9aa0f5; }
+.brand-mark svg { width: 20px; height: 20px; color: #9aa0f5; }
 .brand-mark.small svg { width: 17px; height: 17px; }
 .auth-sub { color: var(--text3); margin: 12px 0 22px; font-size: 13px; line-height: 1.55; }
 .auth-note { margin-top: 18px; text-align: center; line-height: 1.5; }
@@ -267,7 +267,7 @@ textarea { resize: none; line-height: 1.5; }
 }
 .head-title:hover { background: var(--bg3); }
 .head-mark { display: grid; place-items: center; width: 22px; height: 22px; }
-.head-mark svg { width: 17px; height: 17px; fill: #9aa0f5; }
+.head-mark svg { width: 17px; height: 17px; color: #9aa0f5; }
 .pill {
   display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px;
   border-radius: 999px; border: 1px solid var(--line); background: var(--bg2);
@@ -298,7 +298,7 @@ textarea { resize: none; line-height: 1.5; }
   background: var(--bg2); border: 1px solid var(--line);
   display: grid; place-items: center; margin-top: 2px;
 }
-.avatar svg { fill: #9aa0f5; stroke: none; width: 16px; height: 16px; }
+.avatar svg { color: #9aa0f5; width: 16px; height: 16px; }
 .bubble-wrap { display: flex; flex-direction: column; gap: 4px; align-items: flex-end; max-width: 100%; }
 .msg.assistant .bubble { max-width: 100%; }
 .bubble {
@@ -390,7 +390,7 @@ textarea { resize: none; line-height: 1.5; }
 /* hero / empty state */
 .hero { margin: auto; text-align: center; max-width: 620px; padding: 40px 10px; }
 .hero-mark { display: grid; place-items: center; margin-bottom: 14px; }
-.hero-mark svg { width: 38px; height: 38px; fill: #9aa0f5; stroke: none; }
+.hero-mark svg { width: 38px; height: 38px; color: #9aa0f5; }
 .hero h2 { font-size: 25px; font-weight: 600; letter-spacing: -.01em; }
 .hero p { margin: 10px auto 24px; max-width: 460px; font-size: 13.5px; }
 .hero-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
@@ -625,7 +625,7 @@ textarea { resize: none; line-height: 1.5; }
   background: var(--bg0); border: 1px solid var(--line2); position: relative; z-index: 2;
   transition: transform .25s ease, box-shadow .25s ease;
 }
-.orb-core svg { fill: #9aa0f5; stroke: none; width: 38px; height: 38px; }
+.orb-core svg { color: #9aa0f5; width: 38px; height: 38px; }
 .orb-ring {
   position: absolute; inset: 0; border-radius: 50%; border: 1px solid var(--accent);
   opacity: .25; transform: scale(.82); transition: transform .3s, opacity .3s;

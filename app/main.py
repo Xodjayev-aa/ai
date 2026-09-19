@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
+from app.db.engine import kick_warmer, start_warmer
 
 # Never let a broken database stop the app from booting: the UI shows an
 # honest storage banner and the engine retries the schema on first use.
@@ -13,7 +14,33 @@ if not init_db():
     logging.getLogger("aether").error(
         "Database schema initialisation failed — see /api/ai/status for details")
 
+# Cold Turso is the usual culprit behind "the first login after a deploy
+# failed": warm it in the background (SELECT 1 at ~0/5/15/30/60 s) so the
+# first real query is not also the first round-trip. Never blocks boot.
+start_warmer()
+
 app = FastAPI(title="Aether PWA API", version="4.0.0")
+
+
+class TursoWarmKick:
+    """First request after boot: make sure the background warmer is running.
+
+    A plain ASGI middleware (not BaseHTTPMiddleware) so streaming responses —
+    every chat answer is SSE — pass through completely untouched. `kick_warmer()`
+    only spawns a daemon thread and returns: it is never awaited and never on
+    the critical path of the request.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            kick_warmer()
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(TursoWarmKick)
 
 _origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 _wildcard = "*" in _origins

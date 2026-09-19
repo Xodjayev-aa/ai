@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="Aether">
-  <path fill="#9aa0f5" fill-rule="evenodd"
-        d="M12 2.5 20.3 7.3 20.3 16.7 12 21.5 3.7 16.7 3.7 7.3Z M12 8.29 14.82 14.56 9.18 14.56Z"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <rect width="24" height="24" rx="5.4" fill="#1e1e21"/>
+  <path d="M5.4 19.8 12 4.2l6.6 15.6" fill="none" stroke="#9aa0f5" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M8.1 14.6h7.8" fill="none" stroke="#9aa0f5" stroke-width="2.6" stroke-linecap="round"/>
 </svg>

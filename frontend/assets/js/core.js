@@ -138,6 +138,26 @@ class ApiError extends Error {
 Aether.ApiError = ApiError;
 
 const TOKEN_KEY = "aether_token";
+const RETURN_HASH_KEY = "aether_return_hash";
+
+/* Read a JWT payload without verifying it (the server verifies; we only need
+   the email claim to prefill the form after a storage wipe). */
+Aether.decodeJwt = function decodeJwt(token) {
+  try {
+    const part = String(token || "").split(".")[1];
+    if (!part) return null;
+    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const bytes = Uint8Array.from(atob(padded), (ch) => ch.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch { return null; }
+};
+
+Aether.emailFromToken = function emailFromToken(token) {
+  const payload = Aether.decodeJwt(token);
+  return payload && typeof payload.sub === "string" ? payload.sub : "";
+};
+
 Aether.session = {
   get token() { return localStorage.getItem(TOKEN_KEY) || ""; },
   set token(value) {
@@ -147,6 +167,26 @@ Aether.session = {
   get email() { return localStorage.getItem("aether_email") || ""; },
   set email(value) { localStorage.setItem("aether_email", value || ""); },
   clear() { this.token = ""; this.email = ""; },
+
+  /* Signing out (or being signed out) must not lose the open conversation:
+     its identity lives in location.hash, so stash it before showing the login
+     screen and put it back after the next successful sign-in. */
+  stashHash() {
+    try {
+      if (location.hash) sessionStorage.setItem(RETURN_HASH_KEY, location.hash);
+    } catch { /* private mode */ }
+    return location.hash;
+  },
+  restoreHash() {
+    try {
+      const hash = sessionStorage.getItem(RETURN_HASH_KEY);
+      if (!hash) return "";
+      sessionStorage.removeItem(RETURN_HASH_KEY);
+      if (location.hash !== hash) location.hash = hash;
+      Aether.emit("hash:restored", hash);
+      return hash;
+    } catch { return ""; }
+  },
 };
 
 function authHeaders(extra = {}) {
@@ -198,8 +238,11 @@ Aether.api = async function api(path, opts = {}) {
     }
     const resp = await fetch(path, init);
     if (resp.status === 401 && !path.startsWith("/api/auth/")) {
-      Aether.emit("session:expired");
-      throw await parseError(resp);
+      // Carry the server's detail so the shell can tell "the account is gone"
+      // (storage was reset) apart from "this token is no longer valid".
+      const expired = await parseError(resp);
+      Aether.emit("session:expired", expired);
+      throw expired;
     }
     if (!resp.ok) throw await parseError(resp);
     if (opts.raw) return resp;
@@ -209,13 +252,32 @@ Aether.api = async function api(path, opts = {}) {
     if (err instanceof ApiError) throw err;
     if (err?.name === "AbortError") {
       if (signal?.aborted) throw err;               // caller cancelled — quiet
-      throw new ApiError("The request took too long. Free shared AI can be slow — try again.", { status: 408 });
+      throw new ApiError("The request took too long — try again.", { status: 408 });
     }
     throw new ApiError("You appear to be offline (or the server is unreachable).", { status: 0 });
   } finally {
     if (timer) clearTimeout(timer);
     if (signal) signal.removeEventListener("abort", onAbort);
   }
+};
+
+/* Retry-once, for the few calls that must not be given up on too easily:
+   a cold-start boot check or the first sign-in after a deploy. Only retries
+   errors that can actually change (network, 408, 429, 5xx — including the
+   server's "Warming up" 503); a 401/400 is final. */
+Aether.apiRetry = async function apiRetry(path, opts = {}, { attempts = 2, delay = 250 } = {}) {
+  let last = null;
+  for (let attempt = 1; attempt <= Math.max(1, attempts); attempt += 1) {
+    try {
+      return await Aether.api(path, opts);
+    } catch (err) {
+      last = err;
+      const retryable = err instanceof ApiError && err.retryable;
+      if (!retryable || attempt >= attempts) throw err;
+      await Aether.sleep(delay);
+    }
+  }
+  throw last;
 };
 
 /* SSE streaming helper: parses data: frames, ignores keep-alive comments. */
@@ -542,7 +604,10 @@ Aether.theme = {
 
 Aether.icon = function icon(name, size = 16) {
   const paths = {
-    logo: '<path d="M12 3c.9 4.6 4.4 8.1 9 9-4.6.9-8.1 4.4-9 9-.9-4.6-4.4-8.1-9-9 4.6-.9 8.1-4.4 9-9z"/>',
+    // The rounded-A monogram (same two paths as icons/favicon.svg, no plate
+    // rect — the colour comes from the caller's `color`, stroke from currentColor).
+    logo: '<path d="M5.4 19.8 12 4.2l6.6 15.6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>'
+      + '<path d="M8.1 14.6h7.8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>',
     chat: '<path d="M20.5 11.5a8 8 0 1 1-3.4-6.5L20.5 4l-1 3.6a8 8 0 0 1 1 3.9z"/>',
     phone: '<path d="M6.5 3.5h3l1.5 4-2 1.4a11 11 0 0 0 6.1 6.1l1.4-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2z"/>',
     image: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 17l4.8-4.6 3.4 3.2 2.8-2.6 4 3.8"/>',

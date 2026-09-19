@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
   <meta name="theme-color" content="#1e1e21">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="Aether — a free, keyless AI assistant: chat, voice calls, images and presentations. Free shared AI — short waits possible.">
+  <meta name="description" content="Aether — a free, keyless AI assistant: chat, voice calls, images and presentations.">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -29,13 +29,12 @@
   <main class="auth-card">
     <div class="brand">
       <span class="brand-mark" aria-hidden="true">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2.5 20.3 7.3 20.3 16.7 12 21.5 3.7 16.7 3.7 7.3Z M12 8.29 14.82 14.56 9.18 14.56Z"/></svg>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.4 19.8 12 4.2l6.6 15.6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.1 14.6h7.8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>
       </span>
       <h1>Aether</h1>
     </div>
-    <p class="auth-sub">Chat, voice calls, images and presentations. No third-party sign-in,
-      no API keys, nothing to pay — one free account keeps your chats in one place.
-      The AI itself is a free shared tier, so short waits are possible.</p>
+    <p class="auth-sub">Chat, voice calls, images and presentations. One free account keeps
+      your chats in sync.</p>
     <div class="tabs" role="tablist">
       <button id="tab-login" class="tab active" role="tab">Sign in</button>
       <button id="tab-register" class="tab" role="tab">Create account</button>
@@ -51,10 +50,7 @@
       <p id="auth-error" class="auth-error hidden" role="alert"></p>
     </form>
     <button id="retry-btn" class="btn ghost wide hidden">Reconnect</button>
-    <p class="auth-note muted tiny">
-      Public sign-ups are open. Be kind — it is one shared free tier for everyone,
-      so please do not hammer it.
-    </p>
+    <p class="auth-note muted tiny">Free forever. No credit card, no API keys.</p>
   </main>
 </div>
 
@@ -64,7 +60,7 @@
     <div class="sb-head">
       <div class="brand">
         <span class="brand-mark small" aria-hidden="true">
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2.5 20.3 7.3 20.3 16.7 12 21.5 3.7 16.7 3.7 7.3Z M12 8.29 14.82 14.56 9.18 14.56Z"/></svg>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.4 19.8 12 4.2l6.6 15.6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.1 14.6h7.8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg>
         </span>
         <h1>Aether</h1>
       </div>
@@ -117,7 +113,7 @@
         <svg class="ic" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
       <button id="nav-chat-top" class="head-title" title="Back to chat">
-        <span class="head-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2.5 20.3 7.3 20.3 16.7 12 21.5 3.7 16.7 3.7 7.3Z M12 8.29 14.82 14.56 9.18 14.56Z"/></svg></span>
+        <span class="head-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.4 19.8 12 4.2l6.6 15.6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M8.1 14.6h7.8" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></svg></span>
         <span>Aether</span>
       </button>
       <span class="flex-spacer"></span>
@@ -184,7 +180,7 @@
             </div>
           </div>
           <p id="composer-hint" class="disclaimer muted tiny">
-            Free shared AI — short waits possible, and it can still be wrong. Check anything important.
+            AI can still be wrong — check anything important.
           </p>
         </div>
       </div>
@@ -391,11 +387,10 @@
             free HD neural voices (~140 languages, Uzbek included — the same free read-aloud
             voices Microsoft Edge uses) with your device's own voices as the safety net.</p>
           <p class="muted small-text">Because that capacity is shared and free, it is sized for a
-            friendly crowd rather than unlimited traffic: requests are queued, pace themselves, and
-            you will sometimes see a short cooldown counter. That is the honest trade for costing
-            nothing.</p>
-          <p class="muted tiny">Image generation is powered by Pollinations' free tier. Thanks to
-            everyone keeping open, keyless AI usable.</p>
+            small group rather than unlimited traffic: requests queue up, pace themselves, and you
+            will sometimes see a short cooldown counter. That is the honest trade for costing
+            nothing — free shared AI, short waits possible.</p>
+          <p class="muted tiny">Image generation is powered by Pollinations' free tier.</p>
           <div class="form-row">
             <button id="export-all" class="btn ghost"><svg class="ic" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg> Export all my data (.json)</button>
           </div>

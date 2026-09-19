@@ -146,9 +146,8 @@
         A.el("div", { class: "meter-fill", style: `width:${pct}%` }),
       ]),
       A.el("p", { class: "muted small-text", text:
-        `Shared free tier: ${usage.queue.queued_requests} request(s) queued, `
-        + `~${usage.queue.estimated_wait_seconds}s estimated wait. `
-        + "Free shared AI — short waits possible." }),
+        `${usage.queue.queued_requests} request(s) queued, `
+        + `~${usage.queue.estimated_wait_seconds}s estimated wait.` }),
       usage.cooldown?.active
         ? A.el("p", { class: "cooldown-note", text: `Cooling down: retry in ${A.formatCountdown(usage.cooldown.seconds)}` })
         : null,
@@ -185,8 +184,8 @@
       savePrefs({ voice_speed: Number(speed.value) }, true);
     };
     $("#voice-test").onclick = () => A.speak(
-      "Hi, this is how I sound in a call. Free shared voice servers can have short waits, "
-      + "and if they are busy I switch to your device's best voice.", $("#voice-test"));
+      "Hi, this is how I sound in a call. If the voice servers are busy, I switch to your "
+      + "device's best voice.", $("#voice-test"));
   }
 
   /* ─────────────────────── voice preferences (v2) ─────────────────── */

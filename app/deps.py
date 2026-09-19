@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.database import get_user_by_email
+from app.db.resilience import auth_db_call
 from app.security import decode_access_token
 
 # auto_error=False so we can fall back to the session cookie ourselves.
@@ -36,7 +37,10 @@ def get_current_user(
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user = get_user_by_email(payload["sub"])
+    # Retry once on a transient database hiccup; if the database is still cold
+    # this answers 503 ("Warming up...") rather than a misleading 401 that
+    # would make a valid session look expired.
+    user = auth_db_call(lambda: get_user_by_email(payload["sub"]), label="auth me")
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user

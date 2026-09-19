@@ -7,14 +7,17 @@
  *  - Pre-caching uses allSettled: a single missing file must never break the
  *    install (a failed `addAll` leaves the app with no service worker at all).
  */
-const CACHE = "aether-v11";
+const CACHE = "aether-v12";
+// Exactly the static shell that ships in frontend/ (plus "/" for navigations):
+// every path below exists in the repo, and every shipped shell file is listed.
 const SHELL = [
-  "/", "/index.html", "/assets/app.css", "/manifest.json",
-  "/icons/favicon.svg", "/icons/favicon-16.png", "/icons/favicon-32.png",
-  "/icons/apple-touch-icon.png", "/icons/icon-192.png", "/icons/icon-512.png",
+  "/", "/index.html", "/manifest.json", "/assets/app.css",
   "/assets/js/core.js", "/assets/js/chat.js", "/assets/js/voice.js",
   "/assets/js/slides.js", "/assets/js/images.js", "/assets/js/settings.js",
   "/assets/js/tools.js", "/assets/js/admin.js", "/assets/js/app.js",
+  "/icons/favicon.svg", "/icons/favicon-16.png", "/icons/favicon-32.png",
+  "/icons/apple-touch-icon.png", "/icons/icon-192.png", "/icons/icon-512.png",
+  "/icons/splash-1170x2532.png", "/icons/splash-1284x2778.png",
 ];
 
 self.addEventListener("install", (event) => {

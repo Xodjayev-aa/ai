@@ -6,8 +6,14 @@ from pydantic import BaseModel, EmailStr
 
 from app.ai.config import MAX_PASSWORD_BYTES
 from app.database import create_user, get_user_by_email, update_password
+from app.db.resilience import auth_db_call
 from app.deps import SESSION_COOKIE, get_current_user
 from app.security import create_access_token, hash_password, verify_password
+
+# Every user lookup / write below goes through auth_db_call(): a cold or
+# hiccuping database costs one 250 ms retry, and a database that is still
+# unavailable answers 503 {"detail": "Warming up — try again in a few seconds"}
+# instead of an unhandled 500 on the login screen.
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -77,13 +83,14 @@ def _set_session_cookie(request: Request, response: Response, token: str) -> Non
 @router.post("/register")
 def register(payload: AuthPayload, request: Request, response: Response):
     email = payload.email.lower()
-    if get_user_by_email(email):
+    if auth_db_call(lambda: get_user_by_email(email), label="register lookup"):
         raise HTTPException(status_code=400, detail="Email already registered")
     _validate_password(payload.password)
     owner_email = os.getenv("OWNER_EMAIL", "").strip().lower()
     is_admin = bool(owner_email) and email == owner_email
     hashed = hash_password(payload.password)
-    user_id = create_user(email, hashed, is_admin=is_admin)
+    user_id = auth_db_call(lambda: create_user(email, hashed, is_admin=is_admin),
+                           label="register insert")
     token = create_access_token({"sub": email, "id": user_id})
     _set_session_cookie(request, response, token)
     return {"access_token": token, "token_type": "bearer", "is_admin": is_admin}
@@ -98,7 +105,7 @@ def login(payload: AuthPayload, request: Request, response: Response):
             status_code=429,
             detail="Too many failed attempts. Try again in ~15 minutes.",
         )
-    user = get_user_by_email(email)
+    user = auth_db_call(lambda: get_user_by_email(email), label="login lookup")
     if not user or not verify_password(payload.password, user["password_hash"]):
         _record_failure(identity)
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -121,7 +128,8 @@ def change_password(body: PasswordChange,
         raise HTTPException(status_code=401,
                             detail="Current password is incorrect.")
     _validate_password(body.new_password)
-    update_password(user["id"], hash_password(body.new_password))
+    auth_db_call(lambda: update_password(user["id"], hash_password(body.new_password)),
+                 label="password update")
     return {"status": "success",
             "message": "Password updated. Use it next time you sign in."}
 
