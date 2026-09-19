@@ -95,13 +95,72 @@
     active: null,
     generation: 0,
     preferBrowser: false,
+    legacyFallbackNoticed: false,
     onCaption: null,
     onState: null,
     voice: A.store.get("voice", "nova"),
     speed: Number(A.store.get("voiceSpeed", 1)) || 1,
     muted: false,
+    // Server-side preferences (Settings → Voice). Defaults keep v1 behaviour
+    // until /api/settings/prefs answers.
+    prefs: { voice_hd: true, voice_language: "auto", voice_name: "", exam: { enabled: false } },
+    catalogue: [],
   };
   A.voiceEngine = engine;
+
+  A.syncVoicePrefs = function syncVoicePrefs(prefs) {
+    if (!prefs) return;
+    engine.prefs = { ...engine.prefs, ...prefs };
+    if (prefs.voice_name !== undefined) engine.prefs.voice_name = prefs.voice_name || "";
+  };
+  engine.syncPrefs = A.syncVoicePrefs;
+
+  /** The voice to ask the server for: HD ShortName when enabled, else legacy id. */
+  function effectiveVoice() {
+    const prefs = engine.prefs || {};
+    if (prefs.voice_hd === false) return engine.voice;
+    if (prefs.voice_name) return prefs.voice_name;
+    const language = String(prefs.voice_language || "auto").toLowerCase();
+    if (language && language !== "auto" && engine.catalogue.length) {
+      const base = language.split("-")[0];
+      const exact = engine.catalogue.find((v) => v.locale.toLowerCase() === language);
+      const sameLang = engine.catalogue.find((v) => v.lang === base);
+      if (exact || sameLang) return (exact || sameLang).short;
+    }
+    return engine.voice;
+  }
+  A.effectiveVoice = effectiveVoice;
+
+  /** Load the HD catalogue once, so language → voice mapping works offline. */
+  async function loadCatalogue() {
+    if (engine.catalogue.length) return engine.catalogue;
+    try {
+      const data = await A.api("/api/voice/voices");
+      engine.catalogue = (data.hd && data.hd.voices) || [];
+      engine.hdEnabled = Boolean(data.hd && data.hd.enabled);
+    } catch { /* keep the legacy voice */ }
+    return engine.catalogue;
+  }
+
+  /** Speak a sample line with a specific HD voice (Settings preview). */
+  A.previewVoice = async function previewVoice(shortName) {
+    const previous = engine.prefs.voice_name;
+    engine.prefs = { ...engine.prefs, voice_name: shortName, voice_hd: true };
+    try {
+      await A.speak("This is how I sound in a call.", { silent: true });
+    } finally {
+      engine.prefs = { ...engine.prefs, voice_name: previous };
+    }
+  };
+
+  /** Map a language preference to a speech-recognition tag (device-dependent). */
+  A.recognitionLanguage = function recognitionLanguage() {
+    const code = String((engine.prefs || {}).voice_language || "auto");
+    if (!code || code.toLowerCase() === "auto") return navigator.language || "en-US";
+    if (code.includes("-")) return code;
+    const byBase = { uz: "uz-UZ", en: "en-US", ru: "ru-RU", tr: "tr-TR" };
+    return byBase[code.toLowerCase()] || code;
+  };
 
   A.setVoice = function setVoice(id) {
     engine.voice = id || "nova";
@@ -144,7 +203,8 @@
   }
 
   async function fetchSpeech(text, generation) {
-    if (engine.preferBrowser) return null;
+    if (engine.preferBrowser || engine.prefs.voice_hd === false) return null;
+    const wanted = effectiveVoice();
     try {
       const resp = await fetch("/api/voice/tts", {
         method: "POST",
@@ -152,7 +212,9 @@
           "Content-Type": "application/json",
           ...(A.session.token ? { Authorization: `Bearer ${A.session.token}` } : {}),
         },
-        body: JSON.stringify({ text, voice: engine.voice, speed: engine.speed }),
+        // provider=auto lets the server walk its own chain (HD → backup);
+        // the header below tells us which link actually answered.
+        body: JSON.stringify({ text, voice: wanted, speed: engine.speed, provider: "auto" }),
       });
       if (!resp.ok) {
         if (resp.status === 503) {
@@ -161,6 +223,13 @@
         }
         return null;
       }
+      const engine_used = resp.headers.get("X-Aether-TTS") || "";
+      if (engine_used === "legacy" && !engine.legacyFallbackNoticed) {
+        // One quiet notice per call — never a stream of toasts.
+        engine.legacyFallbackNoticed = true;
+        A.toast("HD voice busy — backup voice used", { timeout: 4000 });
+      }
+      if (engine_used === "hd") engine.hdWorked = true;
       const blob = await resp.blob();
       if (generation !== engine.generation) return null;
       return URL.createObjectURL(blob);
@@ -262,6 +331,10 @@
     silenceTimer: null,
     lastSpeechAt: 0,
     speaking: false,
+    exam: false,          // mirrors prefs.exam.enabled for the current call
+    examPreset: "ielts",
+    question: 0,          // examiner questions asked in this call
+    waiting: false,       // an answer is streaming
   };
   A.voiceCall = call;
 
@@ -275,6 +348,11 @@
     root.innerHTML = `
       <div class="call-top">
         <span class="call-status"><i class="dot"></i><span id="call-status-text">Connecting…</span></span>
+        <div class="call-modes" role="tablist" aria-label="Call mode">
+          <button class="mode-btn active" id="call-mode-chat" role="tab">Chat</button>
+          <button class="mode-btn" id="call-mode-exam" role="tab">Exam</button>
+        </div>
+        <span class="call-hud hidden" id="call-hud"></span>
         <button class="icon-btn" id="call-close" title="End call" aria-label="End call">
           <svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
         </button>
@@ -290,6 +368,8 @@
       <div class="call-controls">
         <button class="call-btn" id="call-mute" title="Mute microphone">${A.icon("mic", 20)}</button>
         <button class="call-btn primary" id="call-mic" title="Start listening">${A.icon("mic", 22)}</button>
+        <button class="call-btn hidden" id="call-done" title="Send my answer now">Done</button>
+        <button class="call-btn hidden" id="call-finish" title="Finish and get feedback">Finish</button>
         <button class="call-btn end" id="call-end" title="End call">${A.icon("phone", 20)}</button>
       </div>
       <div class="call-settings">
@@ -317,9 +397,24 @@
     els.speed = $("#call-speed", root);
     els.speedValue = $("#call-speed-value", root);
     els.close = $("#call-close", root);
+    els.modeChat = $("#call-mode-chat", root);
+    els.modeExam = $("#call-mode-exam", root);
+    els.hud = $("#call-hud", root);
+    els.done = $("#call-done", root);
+    els.finish = $("#call-finish", root);
 
     els.end.onclick = () => A.endCall();
     els.close.onclick = () => A.endCall();
+    els.modeChat.onclick = () => setCallMode(false);
+    els.modeExam.onclick = () => setCallMode(true);
+    // "Done" sends whatever was heard without waiting for the silence timer.
+    els.done.onclick = () => { clearTimeout(call.silenceTimer); onSilence(); };
+    // "Finish" asks the examiner for the feedback card.
+    els.finish.onclick = () => {
+      clearTimeout(call.silenceTimer);
+      call.finalText = "";
+      A.askByVoice("I'm finished — please give me the feedback now.", { finish: true });
+    };
     els.mute.onclick = () => setMuted(!call.muted);
     els.mic.onclick = () => { call.listening ? pauseListening() : startListening(); };
     els.speed.value = String(engine.speed);
@@ -330,6 +425,39 @@
     };
     els.voice.onchange = () => A.setVoice(els.voice.value);
     return els;
+  }
+
+  function setCallMode(exam) {
+    call.exam = Boolean(exam);
+    engine.prefs = { ...engine.prefs, exam: { ...(engine.prefs.exam || {}), enabled: call.exam } };
+    A.saveVoicePrefs?.({ exam: { enabled: call.exam, preset: (engine.prefs.exam || {}).preset || "ielts" } }, true);
+    els.modeChat?.classList.toggle("active", !call.exam);
+    els.modeExam?.classList.toggle("active", call.exam);
+    els.done?.classList.toggle("hidden", !call.exam);
+    els.finish?.classList.toggle("hidden", !call.exam);
+    renderHud();
+    if (call.exam && !call.question) {
+      call.question = 0;
+      caption("Exam mode — say hello and the examiner will start.", "listening");
+      setStatus("Speaking exam — ready");
+    } else if (!call.exam) {
+      setStatus("Listening — pause to send");
+    }
+  }
+  A.setCallMode = setCallMode;
+
+  function renderHud(feedback = false) {
+    if (!els.hud) return;
+    if (!call.exam) {
+      els.hud.classList.add("hidden");
+      return;
+    }
+    els.hud.classList.remove("hidden");
+    els.hud.textContent = feedback
+      ? "Speaking exam — feedback"
+      : call.question
+        ? `Speaking exam — question ${call.question}`
+        : "Speaking exam — ready";
   }
 
   function setOrb(state) {
@@ -352,17 +480,44 @@
   async function loadVoices() {
     try {
       const data = await A.api("/api/voice/voices");
+      engine.catalogue = (data.hd && data.hd.voices) || [];
+      engine.hdEnabled = Boolean(data.hd && data.hd.enabled);
       els.voice.innerHTML = "";
-      for (const item of data.voices) {
-        els.voice.append(A.el("option", {
-          value: item.id,
-          text: `${item.name}${item.tags ? ` — ${item.tags}` : ""}`,
-          selected: item.id === engine.voice,
-        }));
+      const chosen = effectiveVoice();
+      const prefs = engine.prefs || {};
+      if (prefs.voice_hd !== false && engine.catalogue.length) {
+        els.voice.append(A.el("option", { value: "", text: "Auto (best match)" }));
+        let pool = engine.catalogue;
+        const language = String(prefs.voice_language || "auto").toLowerCase();
+        if (language && language !== "auto") {
+          const base = language.split("-")[0];
+          const matches = pool.filter((v) => v.lang === base);
+          if (matches.length) pool = matches;
+        }
+        for (const item of pool) {
+          els.voice.append(A.el("option", {
+            value: item.short,
+            text: `${item.name} · ${item.locale}`,
+            selected: item.short === chosen,
+          }));
+        }
+        els.voice.onchange = () => {
+          A.saveVoicePrefs?.({ voice_name: els.voice.value }, true);
+          engine.prefs = { ...engine.prefs, voice_name: els.voice.value };
+        };
+      } else {
+        for (const item of data.voices || []) {
+          els.voice.append(A.el("option", {
+            value: item.id,
+            text: `${item.name}${item.tags ? ` — ${item.tags}` : ""}`,
+            selected: item.id === engine.voice,
+          }));
+        }
+        els.voice.onchange = () => A.setVoice(els.voice.value);
       }
       A.voiceNote = data.note;
       if (data.queue?.cooling_down) {
-        els.status.textContent = "Voice service busy — using device voices";
+        setStatus("Voice service busy — backup voices ready");
       }
     } catch { /* keep the default option */ }
   }
@@ -372,7 +527,7 @@
     try {
       call.recognition = new Recognition();
       const rec = call.recognition;
-      rec.lang = navigator.language || "en-US";
+      rec.lang = A.recognitionLanguage();
       rec.continuous = true;
       rec.interimResults = true;
       rec.maxAlternatives = 1;
@@ -401,7 +556,8 @@
         caption(call.finalText || interim, "listening");
         els.heard.textContent = call.finalText ? "" : "Start speaking…";
         clearTimeout(call.silenceTimer);
-        call.silenceTimer = setTimeout(onSilence, 1100);
+        // Exam answers are long, so give people more room before sending.
+        call.silenceTimer = setTimeout(onSilence, call.exam ? 2400 : 1100);
       };
       rec.onerror = (event) => {
         if (event.error === "not-allowed" || event.error === "service-not-allowed") {
@@ -469,7 +625,7 @@
   }
 
   /** Ask a question by voice and speak the answer as it streams in. */
-  A.askByVoice = async function askByVoice(text) {
+  A.askByVoice = async function askByVoice(text, opts = {}) {
     if (!call.active) return;
     const generation = ++engine.generation;
     call.speaking = true;
@@ -548,6 +704,10 @@
         els.heard.textContent = err.message || "";
       }
     } finally {
+      if (call.exam && (spoken || sentenceBuffer)) {
+        if (!opts.finish) call.question += 1;   // feedback is not a question
+        renderHud(opts.finish);
+      }
       const tail = A.splitSentences(sentenceBuffer);
       if (tail.length) { spoken += ` ${tail.join(" ")}`; queue.push(sentenceBuffer); }
       queue.finish();
@@ -597,12 +757,16 @@
     call.finalText = "";
     call.active = true;
     call.muted = false;
+    call.question = 0;
+    call.exam = Boolean((engine.prefs.exam || {}).enabled);
     engine.generation += 1;
     engine.preferBrowser = false;
+    engine.legacyFallbackNoticed = false;
     els.root.classList.remove("hidden");
     document.body.classList.add("in-call");
     setOrb("listening");
-    setStatus("Listening — pause to send");
+    setCallMode(call.exam);
+    setStatus(call.exam ? "Speaking exam — ready" : "Listening — pause to send");
     caption("", "listening");
     els.heard.textContent = "Say something like “explain my homework”.";
     setMuted(false);
@@ -630,5 +794,7 @@
       window.speechSynthesis.onvoiceschanged = () => { A.pickBrowserVoice(); };
     }
     $("#call-btn")?.addEventListener("click", () => A.startCall());
+    A.api("/api/settings/prefs").then(A.syncVoicePrefs).catch(() => {});
+    loadCatalogue();
   };
 })();

@@ -7,7 +7,7 @@
  *  - Pre-caching uses allSettled: a single missing file must never break the
  *    install (a failed `addAll` leaves the app with no service worker at all).
  */
-const CACHE = "aether-v10";
+const CACHE = "aether-v11";
 const SHELL = [
   "/", "/index.html", "/assets/app.css", "/manifest.json",
   "/icons/favicon.svg", "/icons/favicon-16.png", "/icons/favicon-32.png",
