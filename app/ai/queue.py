@@ -141,6 +141,7 @@ class KeylessPacer:
             while True:
                 async with self._lock:
                     now = time.time()
+                    elapsed = now - started
                     wait = max(0.0, self._next_allowed - now)
                     if self._cooldown_until > now:
                         wait = max(wait, self._cooldown_until - now)
@@ -148,7 +149,6 @@ class KeylessPacer:
                         self._next_allowed = now + self.interval
                         self._recent.append(now)
                         self.stats["granted"] += 1
-                        elapsed = time.time() - started
                         self.stats["waited_seconds"] += elapsed
                         self.stats["last_wait"] = round(elapsed, 2)
                         return elapsed
