@@ -1,6 +1,6 @@
 import os
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
@@ -22,15 +22,25 @@ start_warmer()
 app = FastAPI(title="Aether PWA API", version="4.0.0")
 
 
-@app.middleware("http")
-async def _turso_warm_kick(request: Request, call_next):
+class TursoWarmKick:
     """First request after boot: make sure the background warmer is running.
 
-    `kick_warmer()` only spawns a daemon thread and returns — it is never
-    awaited and never on the critical path of this request.
+    A plain ASGI middleware (not BaseHTTPMiddleware) so streaming responses —
+    every chat answer is SSE — pass through completely untouched. `kick_warmer()`
+    only spawns a daemon thread and returns: it is never awaited and never on
+    the critical path of the request.
     """
-    kick_warmer()
-    return await call_next(request)
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http":
+            kick_warmer()
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(TursoWarmKick)
 
 _origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
 _wildcard = "*" in _origins
