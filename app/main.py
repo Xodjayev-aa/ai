@@ -5,7 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
 
-init_db()
+# Never let a broken database stop the app from booting: the UI shows an
+# honest storage banner and the engine retries the schema on first use.
+if not init_db():
+    import logging
+
+    logging.getLogger("aether").error(
+        "Database schema initialisation failed — see /api/ai/status for details")
 
 app = FastAPI(title="Aether PWA API", version="4.0.0")
 

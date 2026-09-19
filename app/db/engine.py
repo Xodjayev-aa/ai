@@ -63,6 +63,12 @@ _turso_ever_worked = False
 _turso_error = ""
 _db_warning = _partial_turso
 
+# Schema state (owned by ensure_schema() further down): declared here because
+# status() reports it.
+_schema_ready = False
+_schema_building = False
+_schema_error = ""
+
 
 def _degrade_to_sqlite(exc: Exception) -> None:
     global MODE, _db_warning, _turso_error
@@ -103,6 +109,9 @@ def status() -> dict:
     if not TURSO_CONFIGURED and ON_VERCEL:
         warning = ("No Turso configured — accounts and chats are stored in "
                    "temporary storage and can disappear when the app restarts.")
+    if _schema_error:
+        warning = ("Storage tables could not be created — the app keeps retrying. "
+                   "Sign-in and saving may fail until this is fixed.")
     return {
         "mode": MODE,
         "label": backend,
@@ -110,6 +119,7 @@ def status() -> dict:
         "warning": warning,
         "turso_configured": TURSO_CONFIGURED,
         "turso_error": _turso_error,
+        "schema": {"ready": _schema_ready, "error": _schema_error},
     }
 
 # --------------------------------------------------------------------------
@@ -248,20 +258,20 @@ def _turso_run(statements: list[tuple[str, Sequence[Any]]]) -> list[dict]:
 # Public API
 # --------------------------------------------------------------------------
 
-def query(sql: str, params: Sequence[Any] = ()) -> list[dict]:
+def _query_raw(sql: str, params: Sequence[Any] = ()) -> list[dict]:
     if MODE == "turso":
         return _turso_guard(lambda: _turso_run([(sql, params)])[0]["rows"])
     return _sqlite_query(sql, params)
 
 
-def execute(sql: str, params: Sequence[Any] = ()) -> dict:
+def _execute_raw(sql: str, params: Sequence[Any] = ()) -> dict:
     if MODE == "turso":
         r = _turso_guard(lambda: _turso_run([(sql, params)])[0])
         return {"affected": r["affected"], "last_insert_rowid": r["last_insert_rowid"]}
     return _sqlite_execute(sql, params)
 
 
-def execute_many(statements: Iterable[tuple[str, Sequence[Any]]]) -> None:
+def _execute_many_raw(statements: Iterable[tuple[str, Sequence[Any]]]) -> None:
     stmts = list(statements)
     if not stmts:
         return
@@ -385,15 +395,106 @@ def _safe_alter(sql: str) -> None:
     """Add a column, ignoring 'duplicate column' errors. Works on both
     SQLite and Turso (PRAGMA introspection is unreliable over HTTP)."""
     try:
-        execute(sql, ())
+        _execute_raw(sql, ())
     except Exception:
         pass
 
 
-def init_db() -> None:
-    execute_many([(s, ()) for s in SCHEMA])
-    # -- lightweight migrations (idempotent) --
+def _run_migrations() -> None:
+    """Idempotent column additions — safe to re-run after a schema rebuild."""
     _safe_alter("ALTER TABLE users ADD COLUMN custom_instructions TEXT DEFAULT ''")
     _safe_alter("ALTER TABLE users ADD COLUMN auto_memory INTEGER DEFAULT 1")
     _safe_alter("ALTER TABLE conversations ADD COLUMN folder TEXT DEFAULT ''")
     _safe_alter("ALTER TABLE conversations ADD COLUMN pinned INTEGER DEFAULT 0")
+    _safe_alter("ALTER TABLE decks ADD COLUMN audience TEXT DEFAULT ''")
+    _safe_alter("ALTER TABLE decks ADD COLUMN tone TEXT DEFAULT ''")
+
+
+def init_db() -> bool:
+    """Create the schema (idempotent). Returns True when the database is usable.
+
+    Never raises: a broken database must degrade into an honest banner, not a
+    dead app. The first statement of the next request retries automatically.
+    """
+    return ensure_schema(force=True)
+
+
+# --------------------------------------------------------------------------
+# Self-healing schema
+# --------------------------------------------------------------------------
+# init_db() runs once at import. If the database is later replaced — a wiped
+# /tmp on a serverless instance, a fresh Turso database, an operator swapping
+# DATABASE_URL — every request would otherwise fail with "no such table" and
+# the app would 500 forever. Instead we detect that class of error, rebuild
+# the schema, and retry the statement once.
+
+_SCHEMA_MARKERS = ("no such table", "no such column", "does not exist",
+                   "unknown column", "no such index")
+
+_schema_lock = threading.RLock()
+
+
+def _schema_missing(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(marker in message for marker in _SCHEMA_MARKERS)
+
+
+def ensure_schema(force: bool = False) -> bool:
+    """Create tables/indexes/migrations if needed. Returns True when usable."""
+    global _schema_ready, _schema_building, _schema_error
+    with _schema_lock:
+        if _schema_ready and not force:
+            return True
+        if _schema_building:            # re-entrant call from init_db() itself
+            return False
+        _schema_building = True
+        try:
+            _execute_many_raw([(statement, ()) for statement in SCHEMA])
+            _run_migrations()
+            _schema_ready = True
+            _schema_error = ""
+            return True
+        except Exception as exc:  # noqa: BLE001 — surfaced through status()
+            _schema_error = f"{type(exc).__name__}: {exc}"[:300]
+            _schema_ready = False
+            return False
+        finally:
+            _schema_building = False
+
+
+def _with_schema_retry(call):
+    """Run a statement; if the schema vanished underneath us, rebuild and retry."""
+    try:
+        return call()
+    except Exception as exc:  # noqa: BLE001
+        if not _schema_missing(exc):
+            raise
+        if not ensure_schema(force=True):
+            raise
+        return call()
+
+
+def query(sql: str, params: Sequence[Any] = ()) -> list[dict]:
+    if not _schema_ready:
+        ensure_schema()
+    return _with_schema_retry(lambda: _query_raw(sql, params))
+
+
+def execute(sql: str, params: Sequence[Any] = ()) -> dict:
+    if not _schema_ready:
+        ensure_schema()
+    return _with_schema_retry(lambda: _execute_raw(sql, params))
+
+
+def execute_many(statements: Iterable[tuple[str, Sequence[Any]]]) -> None:
+    stmts = list(statements)
+    if not stmts:
+        return
+    if not _schema_ready:
+        ensure_schema()
+    _with_schema_retry(lambda: _execute_many_raw(stmts))
+
+
+def schema_health() -> dict:
+    """Exposed through /api/ai/status -> storage.schema."""
+    return {"ready": _schema_ready, "error": _schema_error}
