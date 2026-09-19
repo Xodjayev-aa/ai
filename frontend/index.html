@@ -1,305 +1,460 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <meta name="theme-color" content="#1e1e21">
-  <meta name="description" content="Aether — a fast, minimal AI assistant: chat, research, voice, images and presentations.">
+  <meta name="color-scheme" content="dark light">
+  <meta name="description" content="Aether — a free, keyless AI assistant: chat, voice calls, images and presentations. Free shared AI — short waits possible.">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Aether">
   <link rel="manifest" href="/manifest.json">
-  <link rel="icon" href="/icons/icon-192.png">
-  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="/icons/favicon-16.png" sizes="16x16" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="apple-touch-startup-image" href="/icons/splash-1170x2532.png"
+        media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3)">
+  <link rel="apple-touch-startup-image" href="/icons/splash-1284x2778.png"
+        media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3)">
   <title>Aether</title>
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
 
-  <!-- ════════════════ AUTH ════════════════ -->
-  <div id="auth-view" class="auth-view hidden">
-    <div class="auth-card">
-      <div class="brand"><img src="/icons/icon-192.png" alt="" class="brand-icon"><h1>Aether</h1></div>
-      <p class="auth-sub">A fast, minimal AI assistant — chat, research, voice, images & presentations.</p>
-      <div class="tabs">
-        <button id="tab-login" class="tab active">Sign in</button>
-        <button id="tab-register" class="tab">Create account</button>
-      </div>
-      <form id="auth-form" autocomplete="on">
-        <input type="email" id="auth-email" placeholder="Email" required autocomplete="email">
-        <input type="password" id="auth-password" placeholder="Password" required minlength="6" autocomplete="current-password">
-        <button type="submit" id="auth-submit" class="btn primary wide">Sign in</button>
-        <p id="auth-error" class="auth-error hidden"></p>
-      </form>
-      <button id="retry-btn" class="btn ghost wide hidden" style="margin-top:12px">Reconnect</button>
+<!-- ════════════════════════ AUTH ════════════════════════ -->
+<div id="auth-view" class="auth-view hidden">
+  <main class="auth-card">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2.5 20.3 7.3 20.3 16.7 12 21.5 3.7 16.7 3.7 7.3Z M12 8.29 14.82 14.56 9.18 14.56Z"/></svg>
+      </span>
+      <h1>Aether</h1>
     </div>
-  </div>
+    <p class="auth-sub">Free AI assistant — chat, voice calls, images and presentations.
+      No accounts, no keys, no cost. Free shared AI, so short waits are possible.</p>
+    <div class="tabs" role="tablist">
+      <button id="tab-login" class="tab active" role="tab">Sign in</button>
+      <button id="tab-register" class="tab" role="tab">Create account</button>
+    </div>
+    <form id="auth-form" autocomplete="on">
+      <input type="hidden" id="auth-mode" value="login">
+      <label class="sr-only" for="auth-email">Email</label>
+      <input type="email" id="auth-email" placeholder="Email" required autocomplete="email">
+      <label class="sr-only" for="auth-password">Password</label>
+      <input type="password" id="auth-password" placeholder="Password (min 6 characters)" required
+             minlength="6" autocomplete="current-password">
+      <button type="submit" id="auth-submit" class="btn primary wide">Sign in</button>
+      <p id="auth-error" class="auth-error hidden" role="alert"></p>
+    </form>
+    <button id="retry-btn" class="btn ghost wide hidden">Reconnect</button>
+    <p class="auth-note muted tiny">
+      Public sign-ups are open. Be kind — it is one shared free tier for everyone.
+    </p>
+  </main>
+</div>
 
-  <!-- ════════════════ APP ════════════════ -->
-  <div id="app-view" class="app-view">
-    <aside id="sidebar" class="sidebar">
-      <div class="sb-head">
-        <div class="brand"><img src="/icons/icon-192.png" alt="" class="brand-icon"><h1>Aether</h1></div>
-        <button id="sb-close" class="icon-btn" title="Close sidebar">
-          <svg class="ic" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15M15.5 4.5v15" stroke-width="0"/><path d="M9.5 4.5v15"/><path d="M15 8l-3 4 3 4" stroke-width="0"/><path d="M14.5 8.5L11.5 12l3 3.5" transform="translate(0,0)"/></svg>
-        </button>
+<!-- ════════════════════════ APP ════════════════════════ -->
+<div id="app-view" class="app-view hidden">
+  <aside id="sidebar" class="sidebar" aria-label="Main navigation">
+    <div class="sb-head">
+      <div class="brand">
+        <span class="brand-mark small" aria-hidden="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2.5 20.3 7.3 20.3 16.7 12 21.5 3.7 16.7 3.7 7.3Z M12 8.29 14.82 14.56 9.18 14.56Z"/></svg>
+        </span>
+        <h1>Aether</h1>
       </div>
-      <button id="new-chat" class="nav-btn new">
-        <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> New chat</button>
-      <div class="search-wrap">
-        <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-3.8-3.8"/></svg>
-        <input id="chat-search" type="search" placeholder="Search chats" autocomplete="off">
-      </div>
-      <div id="search-results" class="search-results hidden"></div>
-      <button id="nav-chat" class="nav-btn">
-        <svg class="ic" viewBox="0 0 24 24"><path d="M20.5 11.5a8 8 0 1 1-3.4-6.5L20.5 4l-1 3.6a8 8 0 0 1 1 3.9z"/></svg> Chat</button>
-      <button id="nav-images" class="nav-btn">
-        <svg class="ic" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 17l4.8-4.6 3.4 3.2 2.8-2.6 4 3.8"/></svg> Images</button>
-      <button id="nav-slides" class="nav-btn">
-        <svg class="ic" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="12" rx="2"/><path d="M12 16.5V20M8.5 20h7"/></svg> Presentations</button>
-      <button id="nav-news" class="nav-btn">
-        <svg class="ic" viewBox="0 0 24 24"><path d="M4.5 5.5h12a1 1 0 0 1 1 1v11a2 2 0 0 0 2 2h-13a2 2 0 0 1-2-2v-11a1 1 0 0 1 1-1z"/><path d="M17.5 9h1.5a1 1 0 0 1 1 1v7.5a1.8 1.8 0 0 1-1.8 1.8M7.5 9h6M7.5 12.5h6M7.5 16h4"/></svg> News</button>
-      <button id="nav-tasks" class="nav-btn">
-        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/></svg> Scheduled</button>
-      <button id="nav-settings" class="nav-btn">
-        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.14-1.4l2-1.55-2-3.46-2.35.95a7 7 0 0 0-2.42-1.4L13.7 2.6h-3.4l-.39 2.54a7 7 0 0 0-2.42 1.4l-2.35-.95-2 3.46 2 1.55A7 7 0 0 0 5 12c0 .48.05.94.14 1.4l-2 1.55 2 3.46 2.35-.95a7 7 0 0 0 2.42 1.4l.39 2.54h3.4l.39-2.54a7 7 0 0 0 2.42-1.4l2.35.95 2-3.46-2-1.55c.09-.46.14-.92.14-1.4z"/></svg> Settings</button>
-      <button id="nav-admin" class="nav-btn hidden">
-        <svg class="ic" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 7.9-7.5 9.5-4.3-1.6-7.5-4.9-7.5-9.5V6z"/><path d="M9.2 12.2l2 2 3.6-4"/></svg> Admin</button>
-      <nav id="conv-list" class="conv-list" aria-label="Conversations"></nav>
-      <div class="sidebar-foot">
-        <span id="user-email" class="muted small-text"></span>
-        <button id="password-btn" class="nav-btn">
-          <svg class="ic" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg> Change password</button>
-        <button id="logout-btn" class="nav-btn">
-          <svg class="ic" viewBox="0 0 24 24"><path d="M14 4.5H7a1.5 1.5 0 0 0-1.5 1.5v12A1.5 1.5 0 0 0 7 19.5h7M10 12h10.5M17 8.5l3.5 3.5-3.5 3.5"/></svg> Sign out</button>
-      </div>
-    </aside>
-    <div id="scrim" class="scrim"></div>
+      <button id="sb-close" class="icon-btn" title="Hide sidebar" aria-label="Hide sidebar">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M14.5 8.5L11.5 12l3 3.5"/><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M9.5 4.5v15"/></svg>
+      </button>
+    </div>
 
-    <main class="main">
-      <header class="float-head">
-        <button id="menu-btn" class="icon-btn" title="Toggle sidebar">
-          <svg class="ic" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-        </button>
-        <span class="flex-spacer"></span>
-        <span id="mode-pill" class="pill" title="AI providers and database mode">…</span>
-        <button id="user-btn" class="icon-btn" title="Account">
-          <svg class="ic" viewBox="0 0 24 24" style="width:18px;height:18px"><circle cx="12" cy="8" r="3.5"/><path d="M5 19.5c1.6-3.2 4.2-4.8 7-4.8s5.4 1.6 7 4.8"/></svg>
-        </button>
-      </header>
+    <button id="new-chat" class="nav-btn new">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg> New chat
+    </button>
 
-      <!-- CHAT -->
-      <section id="chat-pane" class="pane">
-        <div id="messages" class="messages">
-          <div class="hero">
-            <h2>What should we dig into?</h2>
-            <p>Ask anything — answers are drafted by one AI and polished by another when it counts.</p>
-            <div class="hero-chips">
-              <button class="chip-sugg" data-fill="Explain quantum computing like I'm 12">Explain something simply</button>
-              <button class="chip-sugg" data-fill="Help me prepare for a test on World War 2 — quiz me with 5 questions one at a time.">Quiz me for a test</button>
-              <button class="chip-sugg" data-fill="Write a polished email asking my teacher for feedback on my project">Draft an email</button>
-              <button class="chip-sugg" data-fill="Give me a workout plan for a busy student, 20 minutes a day">Plan my day</button>
-            </div>
-          </div>
-        </div>
-        <div class="composer">
-          <div class="composer-shell">
-            <div id="attachments" class="attachments hidden"></div>
-            <div id="phase-bar" class="phase-bar hidden"></div>
-            <div class="composer-box">
-              <textarea id="chat-input" rows="1" placeholder="Message Aether" maxlength="8000"></textarea>
-              <div class="composer-tools">
-                <div class="tools-anchor">
-                  <button id="tools-btn" class="icon-btn" title="Tools">
-                    <svg class="ic" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M12 5v14M5 12h14"/></svg>
-                    <span id="tools-dot" class="tools-dot hidden"></span>
-                  </button>
-                  <div id="tools-menu" class="tools-menu hidden">
-                    <button class="tool-item" id="tool-pdf">
-                      <svg class="ic" viewBox="0 0 24 24"><path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7-7L13 4.4a3.3 3.3 0 0 1 4.7 4.7l-7.8 7.8a1.7 1.7 0 0 1-2.4-2.4l7.1-7"/></svg>
-                      Attach PDF</button>
-                    <button class="tool-item" id="tool-image">
-                      <svg class="ic" viewBox="0 0 24 24"><path d="M4.5 8.5A2.5 2.5 0 0 1 7 6h1.5l1.2-1.8h4.6L15.5 6H17a2.5 2.5 0 0 1 2.5 2.5v8A2.5 2.5 0 0 1 17 19H7a2.5 2.5 0 0 1-2.5-2.5z"/><circle cx="12" cy="12.2" r="3.2"/></svg>
-                      Attach image</button>
-                    <div class="tool-sep"></div>
-                    <button class="tool-item" id="tool-deep">
-                      <span>Deep answer</span><span class="switch" id="sw-deep"></span></button>
-                    <button class="tool-item" id="tool-reason">
-                      <span>Reason step by step</span><span class="switch" id="sw-reason"></span></button>
-                    <div class="tool-sep"></div>
-                    <div class="tool-mode">
-                      <button id="mode-ai" class="mode-btn active" title="AI-generated answer">AI</button>
-                      <button id="mode-research" class="mode-btn" title="Real info from Wikipedia & DuckDuckGo — no AI, with sources">Research</button>
-                    </div>
-                    <select id="persona-select" class="persona-select" title="Persona"><option value="">Persona</option></select>
+    <div class="search-wrap">
+      <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-3.8-3.8"/></svg>
+      <input id="chat-search" type="search" placeholder="Search chats  ⌘K" autocomplete="off">
+    </div>
+    <div id="search-results" class="search-results hidden"></div>
+
+    <nav class="nav-group">
+      <button id="nav-chat" class="nav-btn active"><svg class="ic" viewBox="0 0 24 24"><path d="M20.5 11.5a8 8 0 1 1-3.4-6.5L20.5 4l-1 3.6a8 8 0 0 1 1 3.9z"/></svg> Chat</button>
+      <button id="call-btn" class="nav-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M6.5 3.5h3l1.5 4-2 1.4a11 11 0 0 0 6.1 6.1l1.4-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2z"/></svg> Voice call</button>
+      <button id="nav-images" class="nav-btn"><svg class="ic" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.6"/><path d="M4.5 17l4.8-4.6 3.4 3.2 2.8-2.6 4 3.8"/></svg> Images</button>
+      <button id="nav-slides" class="nav-btn"><svg class="ic" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="12" rx="2"/><path d="M12 16.5V20M8.5 20h7"/></svg> Presentations</button>
+      <button id="nav-news" class="nav-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M4.5 5.5h12a1 1 0 0 1 1 1v11a2 2 0 0 0 2 2h-13a2 2 0 0 1-2-2v-11a1 1 0 0 1 1-1z"/><path d="M7.5 9h6M7.5 12.5h6M7.5 16h4"/></svg> News</button>
+      <button id="nav-tasks" class="nav-btn"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/></svg> Scheduled</button>
+      <button id="nav-settings" class="nav-btn"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.14-1.4l2-1.55-2-3.46-2.35.95a7 7 0 0 0-2.42-1.4L13.7 2.6h-3.4l-.39 2.54a7 7 0 0 0-2.42 1.4l-2.35-.95-2 3.46 2 1.55A7 7 0 0 0 5 12c0 .48.05.94.14 1.4l-2 1.55 2 3.46 2.35-.95a7 7 0 0 0 2.42 1.4l.39 2.54h3.4l.39-2.54a7 7 0 0 0 2.42-1.4l2.35.95 2-3.46-2-1.55c.09-.46.14-.92.14-1.4z"/></svg> Settings</button>
+      <button id="nav-admin" class="nav-btn hidden"><svg class="ic" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 7.9-7.5 9.5-4.3-1.6-7.5-4.9-7.5-9.5V6z"/><path d="M9.2 12.2l2 2 3.6-4"/></svg> Admin</button>
+    </nav>
+
+    <nav id="conv-list" class="conv-list" aria-label="Conversations"></nav>
+
+    <div class="sidebar-foot">
+      <button id="sb-meter" class="sb-meter" title="Daily free-tier usage" aria-label="Daily usage">
+        <div class="meter"><div id="sb-meter-fill" class="meter-fill"></div></div>
+        <span id="sb-meter-text" class="muted tiny">– / – today</span>
+      </button>
+      <span id="user-email" class="muted tiny"></span>
+      <div class="sb-actions">
+        <button id="theme-toggle" class="nav-btn small"><svg class="ic" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg> Dark</button>
+        <button id="password-btn" class="nav-btn small"><svg class="ic" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="9" rx="2"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg> Password</button>
+        <button id="logout-btn" class="nav-btn small"><svg class="ic" viewBox="0 0 24 24"><path d="M14 4.5H7a1.5 1.5 0 0 0-1.5 1.5v12A1.5 1.5 0 0 0 7 19.5h7M10 12h10.5M17 8.5l3.5 3.5-3.5 3.5"/></svg> Sign out</button>
+      </div>
+    </div>
+  </aside>
+  <div id="scrim" class="scrim"></div>
+
+  <main class="main">
+    <header class="float-head">
+      <button id="menu-btn" class="icon-btn" title="Toggle sidebar" aria-label="Toggle sidebar">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+      <button id="nav-chat-top" class="head-title" title="Back to chat">
+        <span class="head-mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2.5 20.3 7.3 20.3 16.7 12 21.5 3.7 16.7 3.7 7.3Z M12 8.29 14.82 14.56 9.18 14.56Z"/></svg></span>
+        <span>Aether</span>
+      </button>
+      <span class="flex-spacer"></span>
+      <button id="mode-pill" class="pill" title="Keyless AI status"></button>
+      <button id="user-btn" class="icon-btn" title="Account & settings" aria-label="Account">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 19.5c1.6-3.2 4.2-4.8 7-4.8s5.4 1.6 7 4.8"/></svg>
+      </button>
+    </header>
+
+    <div id="storage-banner" class="banner warn hidden" role="status"></div>
+    <div id="offline-note" class="banner warn hidden" role="status">
+      You are offline — answers and images need a connection.
+    </div>
+
+    <!-- ───────── CHAT ───────── -->
+    <section id="chat-pane" class="pane">
+      <div id="messages" class="messages"></div>
+      <div id="followup-chips" class="followup-chips hidden"></div>
+      <div class="composer">
+        <div class="composer-shell">
+          <div id="attachments" class="attachments hidden"></div>
+          <div id="phase-bar" class="phase-bar hidden"></div>
+          <div id="cooldown-banner" class="cooldown-banner hidden"></div>
+          <div id="composer" class="composer-box">
+            <textarea id="chat-input" rows="1" placeholder="Message Aether — Enter to send"
+                      maxlength="8000" aria-label="Message"></textarea>
+            <div class="composer-tools">
+              <div class="tools-anchor">
+                <button id="tools-btn" class="icon-btn" title="Tools">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+                  <span id="tools-dot" class="tools-dot hidden"></span>
+                </button>
+                <div id="tools-menu" class="tools-menu hidden">
+                  <button class="tool-item" id="tool-pdf"><svg class="ic" viewBox="0 0 24 24"><path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7-7L13 4.4a3.3 3.3 0 0 1 4.7 4.7l-7.8 7.8a1.7 1.7 0 0 1-2.4-2.4l7.1-7"/></svg> Attach PDF</button>
+                  <button class="tool-item" id="tool-image"><svg class="ic" viewBox="0 0 24 24"><rect x="4.5" y="6" width="15" height="12" rx="2.5"/><circle cx="9" cy="10.5" r="1.5"/><path d="M5.5 16l4-3.8 3 2.8 2.4-2.2 3.6 3.2"/></svg> Attach image</button>
+                  <div class="tool-sep"></div>
+                  <button class="tool-item" id="tool-deep"><span>Deep answer <span class="muted tiny">(second pass)</span></span><span class="switch" id="sw-deep"></span></button>
+                  <button class="tool-item" id="tool-reason"><span>Reason step by step</span><span class="switch" id="sw-reason"></span></button>
+                  <div class="tool-sep"></div>
+                  <div class="tool-mode">
+                    <button id="mode-ai" class="mode-btn active" title="AI answer">AI</button>
+                    <button id="mode-research" class="mode-btn" title="Real sources, no AI">Research</button>
                   </div>
-                </div>
-                <div class="composer-right">
-                  <button id="mic-btn" class="icon-btn" title="Voice input">
-                    <svg class="ic" viewBox="0 0 24 24" style="width:18px;height:18px"><rect x="9.5" y="3.5" width="5" height="10.5" rx="2.5"/><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5V21M9 21h6"/></svg></button>
-                  <button id="send-btn" class="send-btn" title="Send">
-                    <svg class="ic" viewBox="0 0 24 24" style="width:17px;height:17px;stroke-width:2.2"><path d="M12 19V6M6.5 11.5L12 6l5.5 5.5"/></svg></button>
+                  <select id="persona-select" class="persona-select" title="Persona" aria-label="Persona">
+                    <option value="">Persona</option>
+                  </select>
                 </div>
               </div>
+              <div class="composer-right">
+                <button id="call-btn-2" class="icon-btn call-btn" title="Start a voice call (keyless)"
+                        onclick="Aether.startCall()">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M6.5 3.5h3l1.5 4-2 1.4a11 11 0 0 0 6.1 6.1l1.4-2 4 1.5v3a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.5 5.7a2 2 0 0 1 2-2.2z"/></svg>
+                </button>
+                <button id="mic-btn" class="icon-btn" title="Dictate">
+                  <svg class="ic" viewBox="0 0 24 24"><rect x="9.5" y="3.5" width="5" height="10.5" rx="2.5"/><path d="M6 11.5a6 6 0 0 0 12 0M12 17.5V21M9 21h6"/></svg>
+                </button>
+                <button id="send-btn" class="send-btn" title="Send">
+                  <svg class="ic" viewBox="0 0 24 24"><path d="M12 19V6M6.5 11.5L12 6l5.5 5.5"/></svg>
+                </button>
+                <button id="stop-btn" class="stop-btn hidden" title="Stop generating">
+                  <svg class="ic" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg>
+                </button>
+              </div>
             </div>
-            <p class="disclaimer">Aether can make mistakes — check important info.</p>
           </div>
-          <input type="file" id="pdf-input" accept=".pdf" class="hidden">
-          <input type="file" id="image-input" accept="image/png,image/jpeg,image/webp" class="hidden">
-          <input type="checkbox" id="force-polish" class="hidden">
-          <input type="checkbox" id="reasoning-toggle" class="hidden">
+          <p id="composer-hint" class="disclaimer muted tiny">
+            Free shared AI — short waits possible, and it can still be wrong. Check anything important.
+          </p>
         </div>
-      </section>
+      </div>
+    </section>
 
-      <!-- IMAGES -->
-      <section id="images-pane" class="pane hidden">
-        <div class="tool-head"><h2>Images</h2><p class="muted">Free generation via Pollinations — describe what you want.</p></div>
-        <div class="tool-form">
-          <textarea id="image-prompt" rows="2" placeholder="A nebula city at dusk, cinematic lighting…"></textarea>
+    <!-- ───────── IMAGES ───────── -->
+    <section id="images-pane" class="pane hidden">
+      <div class="tool-head">
+        <h2>Images</h2>
+        <p class="muted small-text">Describe it, pick a shape, generate. Free — first render can take 10–30s.</p>
+      </div>
+      <div class="tool-form">
+        <textarea id="image-prompt" rows="2" maxlength="600"
+                  placeholder="A quiet lighthouse in fog, cinematic, soft blue light…"></textarea>
+        <div class="form-row">
+          <div id="image-ratio" class="ratio-picker" role="group" aria-label="Aspect ratio"></div>
+          <select id="image-model" aria-label="Model">
+            <option value="flux">Detail (flux)</option>
+            <option value="turbo">Fast (turbo)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <button id="image-idea" class="btn ghost">Surprise me</button>
+          <button id="image-go" class="btn primary">Generate</button>
+        </div>
+        <div id="image-history" class="chip-row hidden"></div>
+      </div>
+      <div id="image-results" class="image-results"></div>
+    </section>
+
+    <!-- ───────── PRESENTATIONS ───────── -->
+    <section id="slides-pane" class="pane hidden">
+      <div class="tool-head">
+        <h2>Presentations</h2>
+        <p class="muted small-text">Aether writes the deck slide by slide, so you see real progress —
+          then export .pptx or a standalone HTML deck.</p>
+      </div>
+      <div class="tool-form">
+        <textarea id="slide-topic" rows="2" maxlength="2000"
+                  placeholder="Topic — e.g. “Renewable energy for schools”"></textarea>
+        <div class="form-row">
+          <select id="slide-count" aria-label="Number of slides"></select>
+          <select id="slide-tone" aria-label="Tone">
+            <option value="professional but engaging">Professional</option>
+            <option value="simple and friendly">Simple & friendly</option>
+            <option value="academic">Academic</option>
+            <option value="energetic and bold">Energetic</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <input id="slide-audience" type="text" placeholder="Audience (optional)" maxlength="60">
+          <button id="slide-go" class="btn primary">Build deck</button>
+        </div>
+        <div id="slide-progress" class="deck-progress hidden">
+          <div class="deck-progress-head">
+            <span id="slide-progress-text" class="small-text"></span>
+            <span id="slide-progress-count" class="muted small-text"></span>
+          </div>
+          <div class="meter"><div id="slide-bar-fill" class="meter-fill"></div></div>
+        </div>
+        <div id="slide-list" class="slide-list"></div>
+      </div>
+      <div class="tool-head sub"><h3>Your decks</h3></div>
+      <div id="deck-list" class="deck-list"></div>
+    </section>
+
+    <!-- ───────── NEWS ───────── -->
+    <section id="news-pane" class="pane hidden">
+      <div class="tool-head"><h2>News</h2>
+        <p class="muted small-text">Headlines from Google News — free, no AI involved.</p></div>
+      <div class="tool-form">
+        <div class="form-row">
+          <input id="news-topic" type="text" placeholder="Topic (empty = top stories)" maxlength="120">
+          <button id="news-go" class="btn primary">Fetch</button>
+        </div>
+      </div>
+      <div id="news-results" class="news-results">
+        <p class="muted pad">Load headlines above.</p>
+      </div>
+    </section>
+
+    <!-- ───────── SCHEDULED ───────── -->
+    <section id="tasks-pane" class="pane hidden">
+      <div class="tool-head"><h2>Scheduled prompts</h2>
+        <p class="muted small-text">A prompt that runs daily; the answer lands in a chat.</p></div>
+      <div class="tool-form">
+        <textarea id="task-prompt" rows="2" maxlength="500"
+                  placeholder="e.g. Give me a 5-line summary of today's AI news"></textarea>
+        <div class="form-row">
+          <select id="task-hour" aria-label="Hour (UTC)"></select>
+          <button id="task-add" class="btn primary">Schedule daily</button>
+        </div>
+        <div id="task-list" class="memory-list"></div>
+      </div>
+    </section>
+
+    <!-- ───────── SETTINGS ───────── -->
+    <section id="settings-pane" class="pane hidden">
+      <div class="tool-head"><h2>Settings</h2>
+        <p class="muted small-text">Make Aether sound and behave like yours.</p></div>
+      <div class="tool-form settings-form">
+
+        <section class="sett-block">
+          <h3>Appearance & voice</h3>
           <div class="form-row">
-            <select id="image-size">
-              <option value="1024x1024">Square 1024×1024</option>
-              <option value="1280x720">Wide 1280×720</option>
-              <option value="720x1280">Tall 720×1280</option>
-            </select>
-            <button id="image-go" class="btn primary">Generate</button>
+            <button id="theme-toggle-settings" class="btn"><svg class="ic" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg><span>Dark</span></button>
+            <button id="voice-test" class="btn ghost">Test voice</button>
           </div>
-        </div>
-        <div id="image-results" class="image-results"></div>
-      </section>
+          <label class="sett-label" for="voice-select">Call voice</label>
+          <select id="voice-select"></select>
+          <label class="sett-label" for="voice-speed">Speaking speed <b id="voice-speed-value">1.0×</b></label>
+          <input id="voice-speed" type="range" min="0.7" max="1.4" step="0.05" value="1">
+          <p class="muted tiny">Free shared voice servers can have short waits. If they are busy,
+            Aether switches to your device's best natural voice instead.</p>
+        </section>
 
-      <!-- PRESENTATIONS -->
-      <section id="slides-pane" class="pane hidden">
-        <div class="tool-head"><h2>Presentations</h2><p class="muted">AI writes the deck — view it here, export .pptx or a standalone HTML deck.</p></div>
-        <div class="tool-form">
-          <textarea id="slide-topic" rows="2" placeholder="Topic — e.g. “Renewable energy for schools”"></textarea>
-          <div class="form-row">
-            <input id="slide-count" type="number" min="3" max="20" value="8" title="Slides">
-            <input id="slide-audience" type="text" placeholder="Audience (optional)" maxlength="60">
-            <button id="slide-go" class="btn primary">Build deck</button>
-          </div>
-        </div>
-        <div id="slide-status" class="muted hidden"></div>
-      </section>
+        <section class="sett-block">
+          <h3>Teach Aether</h3>
+          <p class="muted small-text">A 5-question interview: your name, what you work on, how you
+            like answers, and anything to be careful about. Everything is saved to memory below,
+            and you can edit or delete it any time.</p>
+          <button id="teach-start" class="btn primary"><svg class="ic" viewBox="0 0 24 24"><path d="M3.5 6.5l8.5-3 8.5 3-8.5 3z"/><path d="M6.5 9.5v5c0 1.4 2.5 2.5 5.5 2.5s5.5-1.1 5.5-2.5v-5"/></svg> Start the interview</button>
+        </section>
 
-      <!-- NEWS -->
-      <section id="news-pane" class="pane hidden">
-        <div class="tool-head"><h2>News</h2><p class="muted">Live headlines via Google News — free, no AI.</p></div>
-        <div class="tool-form">
-          <div class="form-row">
-            <input id="news-topic" type="text" placeholder="Topic (leave empty for top stories)" maxlength="120">
-            <button id="news-go" class="btn primary">Fetch</button>
-          </div>
-        </div>
-        <div id="news-results" class="news-results"><p class="muted" style="padding:0 18px">Load headlines above.</p></div>
-      </section>
-
-      <!-- TASKS -->
-      <section id="tasks-pane" class="pane hidden">
-        <div class="tool-head"><h2>Scheduled tasks</h2><p class="muted">A prompt that runs every day at a set hour — the answer lands in a chat.</p></div>
-        <div class="tool-form">
-          <textarea id="task-prompt" rows="2" maxlength="500" placeholder="e.g. Give me a 5-line summary of today's AI news"></textarea>
-          <div class="form-row">
-            <select id="task-hour" title="Hour (UTC)"></select>
-            <button id="task-add" class="btn primary">Schedule daily</button>
-          </div>
-          <div id="task-list" class="memory-list"></div>
-        </div>
-      </section>
-
-      <!-- SETTINGS -->
-      <section id="settings-pane" class="pane hidden">
-        <div class="tool-head"><h2>Settings</h2><p class="muted">Personalize how Aether answers you.</p></div>
-        <div class="tool-form settings-form">
-          <label class="sett-label" for="instructions">Custom instructions <span class="muted small-text">— always applied to every answer</span></label>
-          <textarea id="instructions" rows="3" maxlength="2000" placeholder="e.g. I'm a 10th-grade student. Explain simply, use examples, keep answers under 300 words."></textarea>
-          <button id="instructions-save" class="btn primary">Save instructions</button>
-          <hr class="sett-hr">
-          <label class="deep-toggle" style="justify-content:flex-start">
-            <input type="checkbox" id="auto-memory"> <span>Long-term memory — remember facts about me across chats</span>
+        <section class="sett-block">
+          <h3>What Aether remembers</h3>
+          <label class="switch-row">
+            <input type="checkbox" id="auto-memory">
+            <span>Learn from our chats (long-term memory)</span>
           </label>
           <div id="memory-list" class="memory-list"></div>
-          <hr class="sett-hr">
-          <label class="sett-label">Personas <span class="muted small-text">— custom AI characters, selectable from the + menu</span></label>
           <div class="form-row">
-            <input id="persona-name" type="text" placeholder="Name (e.g. Math Tutor)" maxlength="60">
+            <input id="memory-new" type="text" placeholder="Add a memory…" maxlength="300">
+            <button id="memory-add" class="btn">Add</button>
           </div>
-          <textarea id="persona-prompt" rows="2" maxlength="2000" placeholder="How should it behave? e.g. You are a patient math tutor. Always show step-by-step solutions."></textarea>
+        </section>
+
+        <section class="sett-block">
+          <h3>Instructions</h3>
+          <label class="sett-label" for="instructions">Always applied to every answer</label>
+          <textarea id="instructions" rows="3" maxlength="2000"
+                    placeholder="e.g. I'm a 10th-grade student. Explain simply, use examples, keep it under 300 words."></textarea>
+          <button id="instructions-save" class="btn primary">Save instructions</button>
+        </section>
+
+        <section class="sett-block">
+          <h3>Personas</h3>
+          <p class="muted small-text">Your personas stay exactly as you write them — pick one from the
+            tools menu in the composer.</p>
+          <div class="form-row">
+            <input id="persona-name" type="text" placeholder="Name (e.g. Math tutor)" maxlength="60">
+          </div>
+          <textarea id="persona-prompt" rows="2" maxlength="2000"
+                    placeholder="How should it behave? e.g. You are a patient maths tutor. Show every step."></textarea>
           <button id="persona-add" class="btn primary">Add persona</button>
-          <div id="persona-list" class="memory-list"></div>
-          <hr class="sett-hr">
-          <button id="export-all" class="btn ghost">Export all my data (.json)</button>
-        </div>
-      </section>
+          <div id="persona-list" class="persona-list"></div>
+        </section>
 
-      <!-- ADMIN -->
-      <section id="admin-pane" class="pane hidden">
-        <div class="tool-head"><h2>Admin</h2>
-          <p class="muted">Live overview of users, conversations, and AI providers.</p></div>
-        <div id="admin-body" class="admin-body">
-          <div id="admin-cards" class="stat-cards"></div>
-          <div class="admin-grid">
-            <div class="admin-card">
-              <h3>Users</h3>
-              <div class="table-wrap"><table id="admin-users" class="admin-table"></table></div>
-            </div>
-            <div class="admin-card">
-              <h3>Recent conversations</h3>
-              <div class="table-wrap"><table id="admin-convs" class="admin-table"></table></div>
-            </div>
-            <div class="admin-card">
-              <h3>AI providers & features</h3>
-              <div id="admin-ai" class="admin-ai"></div>
-            </div>
+        <section class="sett-block">
+          <h3>Usage & limits</h3>
+          <div id="usage-detail" class="usage-detail"></div>
+          <div class="form-row">
+            <div id="storage-status"></div>
+            <button id="usage-refresh" class="btn ghost small-btn">Refresh</button>
+          </div>
+        </section>
+
+        <section class="sett-block" id="about-block">
+          <h3>About</h3>
+          <p class="muted small-text">Aether <b id="about-version">4.0.0</b> — a free, keyless AI
+            assistant. There is no paid plan and no API key anywhere: chat runs on the free
+            Pollinations tier, research reads Wikipedia and DuckDuckGo directly, and voice uses the
+            free speech service plus your browser's built-in voices.</p>
+          <p class="muted small-text">Because that capacity is shared and free, it is sized for a
+            friendly crowd rather than unlimited traffic: requests are queued, pace themselves, and
+            you will sometimes see a short cooldown counter. That is the honest trade for costing
+            nothing.</p>
+          <p class="muted tiny">Image generation is powered by Pollinations' free tier. Thanks to
+            everyone keeping open, keyless AI usable.</p>
+          <div class="form-row">
+            <button id="export-all" class="btn ghost"><svg class="ic" viewBox="0 0 24 24"><path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/></svg> Export all my data (.json)</button>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ───────── ADMIN ───────── -->
+    <section id="admin-pane" class="pane hidden">
+      <div class="tool-head"><h2>Admin</h2>
+        <p class="muted small-text">Live overview of users, conversations and AI providers.</p></div>
+      <div id="admin-body" class="admin-body">
+        <div id="admin-cards" class="stat-cards"></div>
+        <div class="admin-grid">
+          <div class="admin-card">
+            <h3>Users</h3>
+            <div class="table-wrap"><table id="admin-users" class="admin-table"></table></div>
+          </div>
+          <div class="admin-card">
+            <h3>Recent conversations</h3>
+            <div class="table-wrap"><table id="admin-convs" class="admin-table"></table></div>
+          </div>
+          <div class="admin-card">
+            <h3>AI providers & capacity</h3>
+            <div id="admin-ai" class="admin-ai"></div>
           </div>
         </div>
-      </section>
-    </main>
-  </div>
+      </div>
+    </section>
+  </main>
+</div>
 
-  <!-- ════════════════ SLIDES MODAL ════════════════ -->
-  <div id="slides-modal" class="modal hidden">
-    <div class="modal-inner slides-modal">
-      <div class="modal-bar">
+<!-- ════════════════════════ DECK MODAL ════════════════════════ -->
+<div id="slides-modal" class="modal hidden" role="dialog" aria-label="Deck">
+  <div class="modal-inner slides-modal">
+    <div class="modal-bar">
+      <div class="deck-head">
         <strong id="deck-title">Deck</strong>
-        <div class="modal-actions">
-          <select id="deck-theme" title="Theme">
-            <option value="ocean">Ocean</option><option value="ember">Ember</option>
-            <option value="forest">Forest</option><option value="violet">Violet</option>
-          </select>
-          <button id="deck-pptx" class="btn primary small-btn">Export .pptx</button>
-          <button id="deck-html" class="btn small-btn">HTML deck</button>
-          <button id="slides-close" class="icon-btn" aria-label="Close">
-            <svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
-        </div>
+        <span id="deck-subtitle" class="muted tiny"></span>
       </div>
-      <div id="slide-stage" class="slide-stage"></div>
-      <div class="slide-nav">
-        <button id="slide-prev" class="btn ghost small-btn">←</button>
-        <span id="slide-counter" class="muted small-text"></span>
-        <button id="slide-next" class="btn ghost small-btn">→</button>
+      <div class="modal-actions">
+        <select id="deck-theme" title="Theme">
+          <option value="ocean">Ocean</option><option value="ember">Ember</option>
+          <option value="forest">Forest</option><option value="violet">Violet</option>
+        </select>
+        <button id="deck-pptx" class="btn primary small-btn">Export .pptx</button>
+        <button id="deck-html" class="btn small-btn">HTML deck</button>
+        <button id="deck-regen" class="icon-btn" title="Regenerate this slide">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M20 11.5A8 8 0 1 0 18.6 16M20 5.5v6h-6"/></svg></button>
+        <button id="deck-copy" class="icon-btn" title="Copy slide text">
+          <svg class="ic" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg></button>
+        <button id="slides-close" class="icon-btn" aria-label="Close">
+          <svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
       </div>
     </div>
-  </div>
-
-  <!-- ════════════════ PASSWORD MODAL ════════════════ -->
-  <div id="password-modal" class="modal hidden">
-    <div class="modal-inner" style="width:min(380px,100%)">
-      <div class="modal-bar"><strong>Change password</strong>
-        <button id="password-close" class="icon-btn" aria-label="Close">
-          <svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
-      <form id="password-form" style="display:flex;flex-direction:column;gap:10px;padding:18px">
-        <input type="password" id="pw-current" placeholder="Current password" required autocomplete="current-password">
-        <input type="password" id="pw-new" placeholder="New password (min 6 chars)" required minlength="6" autocomplete="new-password">
-        <input type="password" id="pw-confirm" placeholder="Repeat new password" required minlength="6" autocomplete="new-password">
-        <p id="pw-error" class="auth-error hidden"></p>
-        <button type="submit" class="btn primary wide">Update password</button>
-      </form>
+    <div id="slide-stage" class="slide-stage"></div>
+    <div class="slide-nav">
+      <button id="slide-prev" class="btn ghost small-btn">←</button>
+      <span id="slide-counter" class="muted small-text"></span>
+      <button id="slide-next" class="btn ghost small-btn">→</button>
     </div>
   </div>
+</div>
 
-  <div id="toasts" aria-live="polite"></div>
+<!-- ════════════════════════ PASSWORD MODAL ════════════════════════ -->
+<div id="password-modal" class="modal hidden" role="dialog" aria-label="Change password">
+  <div class="modal-inner dialog">
+    <div class="modal-bar"><strong>Change password</strong>
+      <button id="password-close" class="icon-btn" aria-label="Close">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <form id="password-form" class="dialog-body">
+      <input type="password" id="pw-current" placeholder="Current password" required autocomplete="current-password">
+      <input type="password" id="pw-new" placeholder="New password (min 6 characters)" required minlength="6" autocomplete="new-password">
+      <input type="password" id="pw-confirm" placeholder="Repeat new password" required minlength="6" autocomplete="new-password">
+      <p id="pw-error" class="auth-error hidden" role="alert"></p>
+      <button type="submit" class="btn primary wide">Update password</button>
+    </form>
+  </div>
+</div>
 
-  <script src="/assets/app.js"></script>
-  <script>
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
-  </script>
+<input type="file" id="pdf-input" accept="application/pdf,.pdf" class="sr-only" tabindex="-1">
+<input type="file" id="image-input" accept="image/*" class="sr-only" tabindex="-1">
+
+<div id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<script src="/assets/js/core.js"></script>
+<script src="/assets/js/chat.js"></script>
+<script src="/assets/js/voice.js"></script>
+<script src="/assets/js/slides.js"></script>
+<script src="/assets/js/images.js"></script>
+<script src="/assets/js/settings.js"></script>
+<script src="/assets/js/tools.js"></script>
+<script src="/assets/js/admin.js"></script>
+<script src="/assets/js/app.js"></script>
 </body>
 </html>

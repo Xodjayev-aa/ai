@@ -151,6 +151,30 @@ def add_message(conversation_id: str, user_id: int, role: str,
             "role": role, "content": content, "meta": meta}
 
 
+def upsert_message(message_id: str, conversation_id: str, user_id: int,
+                   role: str, content: str, meta: dict | None = None) -> dict:
+    """Insert an assistant answer under a *client-supplied* id, or extend it.
+
+    Used so the streamed answer and a partially-saved (stopped) answer are the
+    same row: whoever writes last wins, but a shorter partial never overwrites
+    a longer finished answer.
+    """
+    execute(
+        "INSERT INTO messages (id, conversation_id, user_id, role, content, meta) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET "
+        "content = CASE WHEN length(excluded.content) >= length(messages.content) "
+        "THEN excluded.content ELSE messages.content END, "
+        "meta = CASE WHEN length(excluded.content) >= length(messages.content) "
+        "THEN excluded.meta ELSE messages.meta END",
+        (message_id, conversation_id, user_id, role, content,
+         json.dumps(meta) if meta else None),
+    )
+    touch_conversation(conversation_id)
+    return {"id": message_id, "conversation_id": conversation_id,
+            "role": role, "content": content, "meta": meta}
+
+
 def list_messages(conversation_id: str, user_id: int,
                   limit: int = 200) -> list[dict]:
     rows = query(
@@ -408,3 +432,92 @@ def get_conv_any(conv_id: str) -> dict | None:
     rows = query("SELECT id, title, created_at FROM conversations WHERE id = ?",
                  (conv_id,))
     return rows[0] if rows else None
+
+
+# ═══════════════════════════════════════════════ v4: controls & decks ════
+
+def update_memory(memory_id: str, user_id: int, content: str) -> int:
+    return execute(
+        "UPDATE memories SET content = ? WHERE id = ? AND user_id = ?",
+        (content.strip()[:300], memory_id, user_id))["affected"]
+
+
+def last_assistant_message(conversation_id: str, user_id: int) -> dict | None:
+    rows = query(
+        "SELECT id, content, meta FROM messages WHERE conversation_id = ? "
+        "AND user_id = ? AND role = 'assistant' ORDER BY rowid DESC LIMIT 1",
+        (conversation_id, user_id))
+    return rows[0] if rows else None
+
+
+def delete_message(message_id: str, user_id: int) -> int:
+    return execute("DELETE FROM messages WHERE id = ? AND user_id = ?",
+                   (message_id, user_id))["affected"]
+
+
+def truncate_from_message(conversation_id: str, user_id: int,
+                          message_id: str) -> int:
+    """Delete one message and everything after it (used by "Edit" on the last
+    user message: the conversation rewinds to that point, then re-sends)."""
+    rows = query("SELECT rowid AS rid FROM messages WHERE id = ? AND user_id = ?",
+                 (message_id, user_id))
+    if not rows:
+        return 0
+    rid = rows[0]["rid"]
+    return execute(
+        "DELETE FROM messages WHERE conversation_id = ? AND user_id = ? "
+        "AND rowid >= ?", (conversation_id, user_id, rid))["affected"]
+
+
+# ------------------------------------------------------------------ decks
+
+def create_deck(user_id: int, title: str, subtitle: str, topic: str,
+                outline: dict, status: str = "planning") -> dict:
+    deck_id = str(uuid.uuid4())
+    execute(
+        "INSERT INTO decks (id, user_id, title, subtitle, topic, outline, status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (deck_id, user_id, title[:150], subtitle[:200], topic[:2000],
+         json.dumps(outline), status))
+    return {"id": deck_id, "title": title, "subtitle": subtitle,
+            "topic": topic, "outline": outline, "status": status}
+
+
+def get_deck(deck_id: str, user_id: int) -> dict | None:
+    rows = query(
+        "SELECT id, title, subtitle, topic, outline, status, created_at, updated_at "
+        "FROM decks WHERE id = ? AND user_id = ?", (deck_id, user_id))
+    if not rows:
+        return None
+    deck = rows[0]
+    try:
+        deck["outline"] = json.loads(deck.get("outline") or "{}")
+    except (TypeError, ValueError):
+        deck["outline"] = {}
+    return deck
+
+
+def save_deck_outline(deck_id: str, user_id: int, outline: dict,
+                      status: str = "ready", title: str | None = None,
+                      subtitle: str | None = None) -> int:
+    sets = ["outline = ?", "status = ?", "updated_at = CURRENT_TIMESTAMP"]
+    params: list = [json.dumps(outline), status]
+    if title is not None:
+        sets.append("title = ?"); params.append(title[:150])
+    if subtitle is not None:
+        sets.append("subtitle = ?"); params.append(subtitle[:200])
+    params += [deck_id, user_id]
+    return execute(f"UPDATE decks SET {', '.join(sets)} "
+                   "WHERE id = ? AND user_id = ?", tuple(params))["affected"]
+
+
+def list_decks(user_id: int, limit: int = 30) -> list[dict]:
+    return query(
+        "SELECT id, title, subtitle, topic, status, created_at, updated_at "
+        "FROM decks WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
+        (user_id, limit))
+
+
+def delete_deck(deck_id: str, user_id: int) -> int:
+    return execute("DELETE FROM decks WHERE id = ? AND user_id = ?",
+                   (deck_id, user_id))["affected"]

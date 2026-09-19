@@ -24,16 +24,24 @@ from typing import Any, Iterable, Sequence
 
 TURSO_URL = (os.getenv("TURSO_DATABASE_URL") or "").strip().rstrip("/")
 TURSO_TOKEN = (os.getenv("TURSO_AUTH_TOKEN") or "").strip()
+TURSO_CONFIGURED = bool(TURSO_URL and TURSO_TOKEN)
+ON_VERCEL = bool(os.getenv("VERCEL"))
 
-if TURSO_URL:
+if TURSO_URL and TURSO_URL.startswith("libsql://"):
     # Accept libsql:// URLs too and convert to HTTPS for the HTTP API.
-    if TURSO_URL.startswith("libsql://"):
-        TURSO_URL = "https://" + TURSO_URL[len("libsql://"):]
+    TURSO_URL = "https://" + TURSO_URL[len("libsql://"):]
+
+if TURSO_CONFIGURED:
     PIPELINE_URL = TURSO_URL + "/v2/pipeline"
     MODE = "turso"
 else:
     PIPELINE_URL = ""
     MODE = "sqlite"
+    if TURSO_URL and not TURSO_TOKEN:
+        _partial_turso = ("TURSO_DATABASE_URL is set but TURSO_AUTH_TOKEN is "
+                          "missing — using temporary storage.")
+    else:
+        _partial_turso = ""
 
 SQLITE_PATH = (
     os.getenv("DATABASE_URL", "/tmp/aether.db" if os.getenv("VERCEL") else "aether.db")
@@ -42,6 +50,77 @@ SQLITE_PATH = (
 )
 
 _write_lock = threading.Lock()
+
+# --------------------------------------------------------------------------
+# Runtime health
+# --------------------------------------------------------------------------
+# A misconfigured Turso (wrong token, typo'd URL) must never turn the whole app
+# into a 500 machine: we detect it on the first query, fall back to local
+# SQLite for the lifetime of this instance, and report an honest warning that
+# the UI shows as a banner.
+_turso_failures = 0
+_turso_ever_worked = False
+_turso_error = ""
+_db_warning = _partial_turso
+
+# Schema state (owned by ensure_schema() further down): declared here because
+# status() reports it.
+_schema_ready = False
+_schema_building = False
+_schema_error = ""
+
+
+def _degrade_to_sqlite(exc: Exception) -> None:
+    global MODE, _db_warning, _turso_error
+    _turso_error = f"{type(exc).__name__}: {exc}"[:300]
+    if MODE == "turso":
+        MODE = "sqlite"
+        _db_warning = (
+            "Turso is configured but unreachable — falling back to temporary "
+            "storage. Data may not persist until TURSO_DATABASE_URL / "
+            "TURSO_AUTH_TOKEN are fixed."
+        )
+
+
+def _turso_guard(call):
+    """Run a Turso call; degrade to SQLite when Turso never works or keeps failing."""
+    global _turso_failures, _turso_ever_worked
+    try:
+        result = call()
+    except Exception as exc:  # noqa: BLE001 — any failure counts
+        _turso_failures += 1
+        if not _turso_ever_worked or _turso_failures >= 3:
+            _degrade_to_sqlite(exc)
+        raise
+    _turso_failures = 0
+    _turso_ever_worked = True
+    return result
+
+
+def is_persistent() -> bool:
+    """True when data survives a cold start of the serverless instance."""
+    return MODE == "turso" or not ON_VERCEL
+
+
+def status() -> dict:
+    backend = "Turso (persistent)" if MODE == "turso" else (
+        "Local SQLite file" if not ON_VERCEL else "Temporary storage (/tmp)")
+    warning = _db_warning
+    if not TURSO_CONFIGURED and ON_VERCEL:
+        warning = ("No Turso configured — accounts and chats are stored in "
+                   "temporary storage and can disappear when the app restarts.")
+    if _schema_error:
+        warning = ("Storage tables could not be created — the app keeps retrying. "
+                   "Sign-in and saving may fail until this is fixed.")
+    return {
+        "mode": MODE,
+        "label": backend,
+        "persistent": is_persistent(),
+        "warning": warning,
+        "turso_configured": TURSO_CONFIGURED,
+        "turso_error": _turso_error,
+        "schema": {"ready": _schema_ready, "error": _schema_error},
+    }
 
 # --------------------------------------------------------------------------
 # Local SQLite helpers
@@ -179,25 +258,25 @@ def _turso_run(statements: list[tuple[str, Sequence[Any]]]) -> list[dict]:
 # Public API
 # --------------------------------------------------------------------------
 
-def query(sql: str, params: Sequence[Any] = ()) -> list[dict]:
+def _query_raw(sql: str, params: Sequence[Any] = ()) -> list[dict]:
     if MODE == "turso":
-        return _turso_run([(sql, params)])[0]["rows"]
+        return _turso_guard(lambda: _turso_run([(sql, params)])[0]["rows"])
     return _sqlite_query(sql, params)
 
 
-def execute(sql: str, params: Sequence[Any] = ()) -> dict:
+def _execute_raw(sql: str, params: Sequence[Any] = ()) -> dict:
     if MODE == "turso":
-        r = _turso_run([(sql, params)])[0]
+        r = _turso_guard(lambda: _turso_run([(sql, params)])[0])
         return {"affected": r["affected"], "last_insert_rowid": r["last_insert_rowid"]}
     return _sqlite_execute(sql, params)
 
 
-def execute_many(statements: Iterable[tuple[str, Sequence[Any]]]) -> None:
+def _execute_many_raw(statements: Iterable[tuple[str, Sequence[Any]]]) -> None:
     stmts = list(statements)
     if not stmts:
         return
     if MODE == "turso":
-        _turso_run(stmts)
+        _turso_guard(lambda: _turso_run(stmts))
         return
     with _write_lock:
         conn = _local_connect()
@@ -284,6 +363,20 @@ SCHEMA = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS decks (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        subtitle TEXT DEFAULT '',
+        topic TEXT DEFAULT '',
+        outline TEXT NOT NULL,
+        status TEXT DEFAULT 'planning',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_decks_user ON decks (user_id, updated_at)",
+    """
     CREATE TABLE IF NOT EXISTS tasks (
         id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL,
@@ -302,15 +395,106 @@ def _safe_alter(sql: str) -> None:
     """Add a column, ignoring 'duplicate column' errors. Works on both
     SQLite and Turso (PRAGMA introspection is unreliable over HTTP)."""
     try:
-        execute(sql, ())
+        _execute_raw(sql, ())
     except Exception:
         pass
 
 
-def init_db() -> None:
-    execute_many([(s, ()) for s in SCHEMA])
-    # -- lightweight migrations (idempotent) --
+def _run_migrations() -> None:
+    """Idempotent column additions — safe to re-run after a schema rebuild."""
     _safe_alter("ALTER TABLE users ADD COLUMN custom_instructions TEXT DEFAULT ''")
     _safe_alter("ALTER TABLE users ADD COLUMN auto_memory INTEGER DEFAULT 1")
     _safe_alter("ALTER TABLE conversations ADD COLUMN folder TEXT DEFAULT ''")
     _safe_alter("ALTER TABLE conversations ADD COLUMN pinned INTEGER DEFAULT 0")
+    _safe_alter("ALTER TABLE decks ADD COLUMN audience TEXT DEFAULT ''")
+    _safe_alter("ALTER TABLE decks ADD COLUMN tone TEXT DEFAULT ''")
+
+
+def init_db() -> bool:
+    """Create the schema (idempotent). Returns True when the database is usable.
+
+    Never raises: a broken database must degrade into an honest banner, not a
+    dead app. The first statement of the next request retries automatically.
+    """
+    return ensure_schema(force=True)
+
+
+# --------------------------------------------------------------------------
+# Self-healing schema
+# --------------------------------------------------------------------------
+# init_db() runs once at import. If the database is later replaced — a wiped
+# /tmp on a serverless instance, a fresh Turso database, an operator swapping
+# DATABASE_URL — every request would otherwise fail with "no such table" and
+# the app would 500 forever. Instead we detect that class of error, rebuild
+# the schema, and retry the statement once.
+
+_SCHEMA_MARKERS = ("no such table", "no such column", "does not exist",
+                   "unknown column", "no such index")
+
+_schema_lock = threading.RLock()
+
+
+def _schema_missing(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return any(marker in message for marker in _SCHEMA_MARKERS)
+
+
+def ensure_schema(force: bool = False) -> bool:
+    """Create tables/indexes/migrations if needed. Returns True when usable."""
+    global _schema_ready, _schema_building, _schema_error
+    with _schema_lock:
+        if _schema_ready and not force:
+            return True
+        if _schema_building:            # re-entrant call from init_db() itself
+            return False
+        _schema_building = True
+        try:
+            _execute_many_raw([(statement, ()) for statement in SCHEMA])
+            _run_migrations()
+            _schema_ready = True
+            _schema_error = ""
+            return True
+        except Exception as exc:  # noqa: BLE001 — surfaced through status()
+            _schema_error = f"{type(exc).__name__}: {exc}"[:300]
+            _schema_ready = False
+            return False
+        finally:
+            _schema_building = False
+
+
+def _with_schema_retry(call):
+    """Run a statement; if the schema vanished underneath us, rebuild and retry."""
+    try:
+        return call()
+    except Exception as exc:  # noqa: BLE001
+        if not _schema_missing(exc):
+            raise
+        if not ensure_schema(force=True):
+            raise
+        return call()
+
+
+def query(sql: str, params: Sequence[Any] = ()) -> list[dict]:
+    if not _schema_ready:
+        ensure_schema()
+    return _with_schema_retry(lambda: _query_raw(sql, params))
+
+
+def execute(sql: str, params: Sequence[Any] = ()) -> dict:
+    if not _schema_ready:
+        ensure_schema()
+    return _with_schema_retry(lambda: _execute_raw(sql, params))
+
+
+def execute_many(statements: Iterable[tuple[str, Sequence[Any]]]) -> None:
+    stmts = list(statements)
+    if not stmts:
+        return
+    if not _schema_ready:
+        ensure_schema()
+    _with_schema_retry(lambda: _execute_many_raw(stmts))
+
+
+def schema_health() -> dict:
+    """Exposed through /api/ai/status -> storage.schema."""
+    return {"ready": _schema_ready, "error": _schema_error}

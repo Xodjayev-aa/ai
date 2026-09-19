@@ -1,12 +1,16 @@
 {
   "name": "Aether — AI Assistant",
   "short_name": "Aether",
-  "description": "Multi-AI assistant: chat, voice, images and presentations",
+  "description": "Free shared AI assistant: chat, voice calls, images and presentations",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#0b1020",
-  "theme_color": "#0b1020",
+  "orientation": "any",
+  "background_color": "#1e1e21",
+  "theme_color": "#1e1e21",
+  "categories": ["productivity", "utilities"],
   "icons": [
+    { "src": "/icons/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]

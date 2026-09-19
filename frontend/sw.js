@@ -1,36 +1,62 @@
-/* Aether service worker — cache static shell, never cache the API. */
-const CACHE = "aether-v9";
-const SHELL = ["/", "/index.html", "/assets/app.css", "/assets/app.js",
-  "/manifest.json", "/icons/icon-192.png", "/icons/icon-512.png"];
+/* Aether service worker — cache the static shell, never cache the API.
+ *
+ * Rules:
+ *  - /api/* is network-only (streaming, auth, uploads must never be cached).
+ *  - Navigations are network-first with an offline fallback to the shell.
+ *  - Other static assets are cache-first with a background refresh.
+ *  - Pre-caching uses allSettled: a single missing file must never break the
+ *    install (a failed `addAll` leaves the app with no service worker at all).
+ */
+const CACHE = "aether-v10";
+const SHELL = [
+  "/", "/index.html", "/assets/app.css", "/manifest.json",
+  "/icons/favicon.svg", "/icons/favicon-16.png", "/icons/favicon-32.png",
+  "/icons/apple-touch-icon.png", "/icons/icon-192.png", "/icons/icon-512.png",
+  "/assets/js/core.js", "/assets/js/chat.js", "/assets/js/voice.js",
+  "/assets/js/slides.js", "/assets/js/images.js", "/assets/js/settings.js",
+  "/assets/js/tools.js", "/assets/js/admin.js", "/assets/js/app.js",
+];
 
-self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
-});
-
-self.addEventListener("activate", (e) => {
-  e.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE)
+      .then((cache) => Promise.allSettled(SHELL.map((url) => cache.add(url))))
+      .then(() => self.skipWaiting())
   );
 });
 
-self.addEventListener("fetch", (e) => {
-  const url = new URL(e.request.url);
-  if (e.request.method !== "GET" || url.pathname.startsWith("/api/")) return; // network only
-  if (e.request.mode === "navigate") {
-    e.respondWith(fetch(e.request).catch(() => caches.match("/index.html")));
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
+  );
+});
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  const url = new URL(request.url);
+  if (request.method !== "GET" || url.origin !== location.origin) return;
+  if (url.pathname.startsWith("/api/")) return;               // network only
+
+  if (request.mode === "navigate") {
+    event.respondWith(
+      fetch(request).catch(() =>
+        caches.match("/index.html").then((hit) => hit || Response.error()))
+    );
     return;
   }
-  e.respondWith(
-    caches.match(e.request).then((hit) =>
-      hit || fetch(e.request).then((resp) => {
-        if (resp.ok && url.origin === location.origin) {
-          const copy = resp.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy));
+
+  event.respondWith(
+    caches.match(request).then((hit) => {
+      const network = fetch(request).then((response) => {
+        if (response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(request, copy));
         }
-        return resp;
-      })
-    )
+        return response;
+      }).catch(() => hit || Response.error());
+      return hit || network;
+    })
   );
 });
