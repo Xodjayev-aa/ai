@@ -138,6 +138,26 @@ class ApiError extends Error {
 Aether.ApiError = ApiError;
 
 const TOKEN_KEY = "aether_token";
+const RETURN_HASH_KEY = "aether_return_hash";
+
+/* Read a JWT payload without verifying it (the server verifies; we only need
+   the email claim to prefill the form after a storage wipe). */
+Aether.decodeJwt = function decodeJwt(token) {
+  try {
+    const part = String(token || "").split(".")[1];
+    if (!part) return null;
+    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const bytes = Uint8Array.from(atob(padded), (ch) => ch.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch { return null; }
+};
+
+Aether.emailFromToken = function emailFromToken(token) {
+  const payload = Aether.decodeJwt(token);
+  return payload && typeof payload.sub === "string" ? payload.sub : "";
+};
+
 Aether.session = {
   get token() { return localStorage.getItem(TOKEN_KEY) || ""; },
   set token(value) {
@@ -147,6 +167,26 @@ Aether.session = {
   get email() { return localStorage.getItem("aether_email") || ""; },
   set email(value) { localStorage.setItem("aether_email", value || ""); },
   clear() { this.token = ""; this.email = ""; },
+
+  /* Signing out (or being signed out) must not lose the open conversation:
+     its identity lives in location.hash, so stash it before showing the login
+     screen and put it back after the next successful sign-in. */
+  stashHash() {
+    try {
+      if (location.hash) sessionStorage.setItem(RETURN_HASH_KEY, location.hash);
+    } catch { /* private mode */ }
+    return location.hash;
+  },
+  restoreHash() {
+    try {
+      const hash = sessionStorage.getItem(RETURN_HASH_KEY);
+      if (!hash) return "";
+      sessionStorage.removeItem(RETURN_HASH_KEY);
+      if (location.hash !== hash) location.hash = hash;
+      Aether.emit("hash:restored", hash);
+      return hash;
+    } catch { return ""; }
+  },
 };
 
 function authHeaders(extra = {}) {
@@ -198,8 +238,11 @@ Aether.api = async function api(path, opts = {}) {
     }
     const resp = await fetch(path, init);
     if (resp.status === 401 && !path.startsWith("/api/auth/")) {
-      Aether.emit("session:expired");
-      throw await parseError(resp);
+      // Carry the server's detail so the shell can tell "the account is gone"
+      // (storage was reset) apart from "this token is no longer valid".
+      const expired = await parseError(resp);
+      Aether.emit("session:expired", expired);
+      throw expired;
     }
     if (!resp.ok) throw await parseError(resp);
     if (opts.raw) return resp;
@@ -216,6 +259,25 @@ Aether.api = async function api(path, opts = {}) {
     if (timer) clearTimeout(timer);
     if (signal) signal.removeEventListener("abort", onAbort);
   }
+};
+
+/* Retry-once, for the few calls that must not be given up on too easily:
+   a cold-start boot check or the first sign-in after a deploy. Only retries
+   errors that can actually change (network, 408, 429, 5xx — including the
+   server's "Warming up" 503); a 401/400 is final. */
+Aether.apiRetry = async function apiRetry(path, opts = {}, { attempts = 2, delay = 250 } = {}) {
+  let last = null;
+  for (let attempt = 1; attempt <= Math.max(1, attempts); attempt += 1) {
+    try {
+      return await Aether.api(path, opts);
+    } catch (err) {
+      last = err;
+      const retryable = err instanceof ApiError && err.retryable;
+      if (!retryable || attempt >= attempts) throw err;
+      await Aether.sleep(delay);
+    }
+  }
+  throw last;
 };
 
 /* SSE streaming helper: parses data: frames, ignores keep-alive comments. */

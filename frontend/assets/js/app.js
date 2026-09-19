@@ -22,6 +22,63 @@
     $("#auth-mode").value = mode;
   }
 
+  /* ─────────────────────── auth view transitions ──────────────────── */
+
+  // The server names this case explicitly (401 "User not found"): the JWT is
+  // fine, the account behind it is gone — i.e. storage was reset.
+  const MISSING_ACCOUNT = /user not found|account no longer exists/i;
+
+  function isMissingAccount(err) {
+    return Boolean(err) && err.status === 401
+      && MISSING_ACCOUNT.test(String(err.detail || err.message || ""));
+  }
+
+  /* Showing the login screen must not lose the open conversation, so stash
+     the hash first; a successful sign-in restores it (see the form handler). */
+  function showAuthView() {
+    A.session.stashHash();
+    $("#app-view").classList.add("hidden");
+    $("#auth-view").classList.remove("hidden");
+  }
+
+  function showStorageReset() {
+    const email = A.emailFromToken(A.session.token) || A.session.email || "";
+    // The account no longer exists, so the token is meaningless — but keep the
+    // email around: it is the one thing worth prefilling.
+    A.session.token = "";
+    showAuthView();
+    switchAuthTab("register");
+    if (email) $("#auth-email").value = email;
+    $("#auth-password").focus();
+    A.toast("Storage was reset — please create your account again",
+            { type: "warn", timeout: 12000 });
+  }
+
+  function showSessionExpired() {
+    A.session.clear();
+    showAuthView();
+    switchAuthTab("login");
+    A.toast("Session expired — please sign in again", { type: "warn" });
+  }
+
+  /* "Session expired" is only honest when the database is healthy. A stale
+     status check can mean storage is still warming up, which is not the same
+     thing as a dead session. */
+  function storageKnownUnhealthy() {
+    const schema = A.lastStorage?.schema;
+    return Boolean(schema) && schema.ready === false;
+  }
+
+  async function dbHealthy() {
+    if (storageKnownUnhealthy()) return false;
+    try {
+      const status = await A.api("/api/ai/status");
+      A.lastStorage = status?.database || A.lastStorage;
+      const schema = status?.database?.schema;
+      return !(schema && schema.ready === false);
+    } catch { return true; /* the 401 already came through — trust it */ }
+  }
+
   function initAuth() {
     $("#tab-login").onclick = () => switchAuthTab("login");
     $("#tab-register").onclick = () => switchAuthTab("register");
@@ -34,12 +91,15 @@
       button.disabled = true;
       button.textContent = mode === "login" ? "Signing in…" : "Creating account…";
       try {
-        const data = await A.api(`/api/auth/${mode}`, {
+        const data = await A.apiRetry(`/api/auth/${mode}`, {
           method: "POST",
           body: { email: $("#auth-email").value.trim(), password: $("#auth-password").value },
         });
         A.session.token = data.access_token;
         A.session.email = $("#auth-email").value.trim().toLowerCase();
+        $("#auth-email").value = "";
+        $("#auth-password").value = "";
+        A.session.restoreHash();          // open conversation comes back
         await enterApp();
       } catch (err) {
         error.textContent = err.message;
@@ -50,11 +110,15 @@
       }
     };
     $("#retry-btn").onclick = () => location.reload();
-    A.on("session:expired", () => {
-      A.session.clear();
-      A.toast("Session expired — please sign in again", { type: "warn" });
-      $("#app-view").classList.add("hidden");
-      $("#auth-view").classList.remove("hidden");
+    A.on("session:expired", (err) => {
+      if (isMissingAccount(err)) { showStorageReset(); return; }
+      if (storageKnownUnhealthy()) {
+        // Storage is coming back: keep the session and let the user retry
+        // instead of pretending the session died.
+        A.toast("Storage is warming up — try again in a few seconds", { type: "warn" });
+        return;
+      }
+      showSessionExpired();
     });
   }
 
@@ -124,6 +188,7 @@
         data.database?.warning || "",
       ].filter(Boolean).join("\n");
       const storage = data.database || {};
+      A.lastStorage = storage;             // used to judge "session expired"
       const security = data.security || {};
       const notice = storage.warning || security.warning || "";
       const healthy = Boolean(storage.persistent) && !notice;
@@ -340,24 +405,43 @@
 
     if (A.session.token) {
       try {
-        await A.api("/api/auth/me");
+        // Retry once: the first call after a deploy can hit a cold database.
+        await A.apiRetry("/api/auth/me", {}, { attempts: 2, delay: 250 });
         await enterApp();
         initServiceWorker();
         return;
       } catch (err) {
-        if (err.status !== 401) {
-          // Server hiccup: keep the session and offer a retry.
-          $("#auth-view").classList.remove("hidden");
+        if (err.status === 401) {
+          if (isMissingAccount(err)) {
+            showStorageReset();
+            initServiceWorker();
+            return;
+          }
+          if (await dbHealthy()) {
+            showSessionExpired();
+            initServiceWorker();
+            return;
+          }
+          // A 401 while storage is unhealthy is not proof the session died.
+          showAuthView();
           $("#retry-btn").classList.remove("hidden");
           const box = $("#auth-error");
-          box.textContent = "Can't reach the server right now — your session is saved.";
+          box.textContent = "Storage is warming up — try again in a few seconds.";
           box.classList.remove("hidden");
           return;
         }
-        A.session.clear();
+        // 503 "Warming up" / network / 5xx: keep the session and offer a retry.
+        showAuthView();
+        $("#retry-btn").classList.remove("hidden");
+        const box = $("#auth-error");
+        box.textContent = err.status === 503 && err.detail
+          ? err.detail
+          : "Can't reach the server right now — your session is saved.";
+        box.classList.remove("hidden");
+        return;
       }
     }
-    $("#auth-view").classList.remove("hidden");
+    showAuthView();
     initServiceWorker();
   }
 
