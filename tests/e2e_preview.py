@@ -31,6 +31,7 @@ TIMEOUT = httpx.Timeout(180.0, connect=20.0)
 @dataclass
 class Results:
     checks: list[tuple[str, bool, str]] = field(default_factory=list)
+    warnings: list[tuple[str, str]] = field(default_factory=list)
 
     def add(self, name: str, ok: bool, detail: str = "") -> bool:
         mark = "PASS" if ok else "FAIL"
@@ -44,6 +45,11 @@ class Results:
     def note(self, text: str) -> None:
         print(f"      {text}")
 
+    def warn(self, name: str, detail: str = "") -> None:
+        """Soft check: informational only, never fails the run."""
+        print(f"[WARN] {name}{(' — ' + detail) if detail else ''}")
+        self.warnings.append((name, detail))
+
     @property
     def failed(self) -> list[tuple[str, bool, str]]:
         return [c for c in self.checks if not c[1]]
@@ -54,7 +60,12 @@ class Results:
             lines.append(f"| {name} | {'✅' if ok else '❌'} | {detail[:160]} |")
         total = len(self.checks)
         good = total - len(self.failed)
-        return f"**{good}/{total} checks passed**\n\n" + "\n".join(lines)
+        out = f"**{good}/{total} checks passed**\n\n" + "\n".join(lines)
+        if self.warnings:
+            out += "\n\n**Soft checks (informational — never fail the run)**\n\n"
+            out += "| Check | Detail |\n|---|---|\n"
+            out += "\n".join(f"| {n} | {d[:160]} |" for n, d in self.warnings)
+        return out
 
 
 R = Results()
@@ -414,6 +425,60 @@ def test_voice(c: httpx.Client, base: str) -> None:
             R.add("TTS first sound fast", ttfb < 12, f"{ttfb:.1f}s")
 
 
+def test_hd_voice(c: httpx.Client, base: str) -> None:
+    """SOFT probe: the HD Edge voices are a free, unofficial service.
+
+    A busy or blocked HD endpoint is *not* a failure — the call chain is
+    HD → backup voice → browser voices. Everything here is a warning, and the
+    'HD TTS' line always lands in the sticky report.
+    """
+    catalogue = c.get(f"{base}/api/voice/voices")
+    if catalogue.status_code != 200:
+        R.warn("HD TTS", f"voices list returned {catalogue.status_code}")
+        return
+    hd = (catalogue.json() or {}).get("hd") or {}
+    voices = hd.get("voices") or []
+    if not hd:
+        R.warn("HD TTS", "no 'hd' block in /api/voice/voices")
+        return
+    uz = [v for v in voices if str(v.get("short", "")).startswith("uz-")]
+    R.warn("HD TTS catalogue",
+           f"enabled={hd.get('enabled')} voices={len(voices)} "
+           f"languages={','.join(l.get('code', '') for l in (hd.get('languages') or [])[:4])} "
+           f"uzbek={'yes' if uz else 'no'}")
+    R.warn("HD TTS default voice", str(hd.get("default_voice") or "?"))
+
+    t0 = time.time()
+    try:
+        r = c.post(f"{base}/api/voice/tts",
+                   json={"text": "Salom, bu qisqa sinov.", "voice": "uz-UZ-SardorNeural",
+                         "speed": 1.0, "provider": "auto"})
+    except Exception as exc:  # noqa: BLE001 — never fail the run on a soft probe
+        R.warn("HD TTS", f"request failed: {type(exc).__name__}")
+        return
+    took = time.time() - t0
+    engine = r.headers.get("x-aether-tts", "")
+    if r.status_code == 200:
+        size = len(r.content)
+        if engine == "hd":
+            R.warn("HD TTS",
+                   f"uz-UZ-SardorNeural answered with HD audio: {size} bytes in {took:.1f}s")
+            R.warn("HD TTS size check",
+                   f"{'PASS' if size > 5120 else 'small'} — {size} bytes "
+                   f"({'above' if size > 5120 else 'below'} the 5 KB expectation)")
+        else:
+            R.warn("HD TTS",
+                   f"HD busy — backup voice answered ({engine or 'legacy'}), "
+                   f"{size} bytes in {took:.1f}s; the fallback chain held")
+        return
+    detail = {}
+    if r.headers.get("content-type", "").startswith("application/json"):
+        detail = (r.json() or {}).get("detail") or {}
+    R.warn("HD TTS",
+           f"unavailable right now ({r.status_code}, browser_tts="
+           f"{bool(detail.get('browser_tts'))}) — the chain fell back cleanly")
+
+
 def test_status(c: httpx.Client, base: str) -> None:
     r = c.get(f"{base}/api/ai/status")
     if r.status_code != 200:
@@ -426,6 +491,11 @@ def test_status(c: httpx.Client, base: str) -> None:
           json.dumps(keyless)[:160] if keyless else "missing")
     if keyless and "queue" in keyless[0]:
         R.note(f"keyless queue: {json.dumps(keyless[0]['queue'])}")
+    hd = data.get("hd_tts")
+    if isinstance(hd, dict):
+        R.warn("HD TTS status", json.dumps(hd))
+    else:
+        R.warn("HD TTS status", "not reported by /api/ai/status")
 
 
 def main() -> int:
@@ -457,6 +527,7 @@ def main() -> int:
         test_presentations(c, base)
         test_images(c, base)
         test_voice(c, base)
+        test_hd_voice(c, base)
         test_status(c, base)
 
     markdown = R.summary_markdown()
