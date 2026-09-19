@@ -222,8 +222,9 @@
     hdBox.disabled = !hd.enabled;
     $("#voice-hd-note").classList.toggle("hidden", hd.enabled);
     hdBox.onchange = () => {
+      // Turning HD off means "device voices only": the call engine stops
+      // asking the server for speech and uses the browser's own voices.
       savePrefs({ voice_hd: hdBox.checked });
-      A.voiceEngine.preferBrowser = !hdBox.checked && false;
       renderVoicePrefs();
     };
 
