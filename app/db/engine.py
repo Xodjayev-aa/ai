@@ -13,10 +13,14 @@ Public API:
 
 import base64
 import json
+import logging
 import os
 import sqlite3
 import threading
+import time
 from typing import Any, Iterable, Sequence
+
+log = logging.getLogger("aether.db")
 
 # --------------------------------------------------------------------------
 # Configuration
@@ -31,6 +35,11 @@ if TURSO_URL and TURSO_URL.startswith("libsql://"):
     # Accept libsql:// URLs too and convert to HTTPS for the HTTP API.
     TURSO_URL = "https://" + TURSO_URL[len("libsql://"):]
 
+# Declared before the branch: the moment Turso *is* configured this must not
+# be left undefined, or importing the engine raises NameError and the whole
+# deployment 500s (the exact opposite of what enabling persistence should do).
+_partial_turso = ""
+
 if TURSO_CONFIGURED:
     PIPELINE_URL = TURSO_URL + "/v2/pipeline"
     MODE = "turso"
@@ -40,8 +49,6 @@ else:
     if TURSO_URL and not TURSO_TOKEN:
         _partial_turso = ("TURSO_DATABASE_URL is set but TURSO_AUTH_TOKEN is "
                           "missing — using temporary storage.")
-    else:
-        _partial_turso = ""
 
 SQLITE_PATH = (
     os.getenv("DATABASE_URL", "/tmp/aether.db" if os.getenv("VERCEL") else "aether.db")
@@ -70,9 +77,23 @@ _schema_building = False
 _schema_error = ""
 
 
-def _degrade_to_sqlite(exc: Exception) -> None:
-    global MODE, _db_warning, _turso_error
+def _record_turso_error(exc: Exception) -> None:
+    global _turso_error
     _turso_error = f"{type(exc).__name__}: {exc}"[:300]
+
+
+def _is_transient(exc: Exception) -> bool:
+    """Lazy import: the classifier lives with the auth retry helper."""
+    try:
+        from app.db.resilience import is_transient_db_error
+    except Exception:  # pragma: no cover - defensive, fastapi is a hard dep
+        return False
+    return is_transient_db_error(exc)
+
+
+def _degrade_to_sqlite(exc: Exception) -> None:
+    global MODE, _db_warning
+    _record_turso_error(exc)
     if MODE == "turso":
         MODE = "sqlite"
         _db_warning = (
@@ -83,13 +104,21 @@ def _degrade_to_sqlite(exc: Exception) -> None:
 
 
 def _turso_guard(call):
-    """Run a Turso call; degrade to SQLite when Turso never works or keeps failing."""
+    """Run a Turso call; degrade to SQLite when Turso never works or keeps failing.
+
+    A single *transient* failure right after a cold start is not a broken
+    configuration — the warm-up thread and the per-request retry can still
+    rescue the caller, so we only fall back after real repetition (three
+    failures in a row). A hard, non-transient error (bad token, typo'd URL)
+    still degrades immediately, exactly as before.
+    """
     global _turso_failures, _turso_ever_worked
     try:
         result = call()
     except Exception as exc:  # noqa: BLE001 — any failure counts
         _turso_failures += 1
-        if not _turso_ever_worked or _turso_failures >= 3:
+        _record_turso_error(exc)
+        if _turso_failures >= 3 or (not _turso_ever_worked and not _is_transient(exc)):
             _degrade_to_sqlite(exc)
         raise
     _turso_failures = 0
@@ -100,6 +129,97 @@ def _turso_guard(call):
 def is_persistent() -> bool:
     """True when data survives a cold start of the serverless instance."""
     return MODE == "turso" or not ON_VERCEL
+
+
+# --------------------------------------------------------------------------
+# Turso warm-up
+# --------------------------------------------------------------------------
+# A cold Turso edge can take a few seconds to answer its first query. When that
+# first query happens to be "SELECT * FROM users WHERE email = ?" the login
+# fails with a 500 for no good reason. So on startup (and again from the first
+# request after boot, because serverless runtimes freeze idle instances) we
+# probe with a trivial statement on a daemon thread — never on the request path.
+
+WARMUP_DELAYS = (0, 5, 15, 30, 60)   # seconds after the warmer starts
+_warm_lock = threading.Lock()
+_warmer_started = False
+_warmer_thread: threading.Thread | None = None
+_last_warm_kick = 0.0
+WARMUP_KICK_COOLDOWN = 30.0          # min seconds between request-triggered kicks
+_turso_warm = False
+
+
+def turso_warm() -> bool:
+    """True once a warm-up probe (SELECT 1) has succeeded on this instance."""
+    return _turso_warm
+
+
+def warmer_started() -> bool:
+    return _warmer_thread is not None and _warmer_thread.is_alive()
+
+
+def _warm_probe() -> bool:
+    """One trivial round-trip. Returns True the moment Turso answers."""
+    global _turso_warm
+    if MODE != "turso":
+        return False
+    try:
+        _turso_run([("SELECT 1", ())])
+    except Exception as exc:  # noqa: BLE001 — warm-up is best-effort
+        log.debug("turso warm-up probe failed: %s: %s", type(exc).__name__, exc)
+        return False
+    if not _turso_warm:
+        _turso_warm = True
+        log.info("turso warm")
+    return True
+
+
+def _warmer_loop() -> None:
+    started = time.monotonic()
+    for offset in WARMUP_DELAYS:
+        wait = offset - (time.monotonic() - started)
+        if wait > 0:
+            time.sleep(wait)
+        if _warm_probe():
+            return
+    log.warning("turso did not warm up within %ss — the app keeps working and "
+                "retries per request", WARMUP_DELAYS[-1])
+
+
+def start_warmer(force: bool = False) -> bool:
+    """Start the background warm-up thread. Idempotent and never blocking."""
+    global _warmer_started, _warmer_thread
+    if not TURSO_CONFIGURED or MODE != "turso" or _turso_warm:
+        return False
+    with _warm_lock:
+        if _warmer_thread is not None and _warmer_thread.is_alive():
+            return False
+        if _warmer_started and not force:
+            return False
+        _warmer_started = True
+        _warmer_thread = threading.Thread(target=_warmer_loop, name="turso-warmer",
+                                          daemon=True)
+        _warmer_thread.start()
+        log.info("turso warm-up started (checks at %s)",
+                 ", ".join(f"{d}s" for d in WARMUP_DELAYS))
+        return True
+
+
+def kick_warmer() -> None:
+    """Called from the request path: start warm-up if the thread is gone.
+
+    Only ever spawns a daemon thread and returns immediately, so an in-flight
+    request is never delayed by it. Rate-limited so a burst of requests cannot
+    spawn a burst of threads.
+    """
+    global _last_warm_kick
+    if _turso_warm or not TURSO_CONFIGURED or MODE != "turso":
+        return
+    now = time.monotonic()
+    if now - _last_warm_kick < WARMUP_KICK_COOLDOWN:
+        return
+    _last_warm_kick = now
+    start_warmer(force=True)
 
 
 def status() -> dict:
@@ -119,6 +239,8 @@ def status() -> dict:
         "warning": warning,
         "turso_configured": TURSO_CONFIGURED,
         "turso_error": _turso_error,
+        "turso_warm": _turso_warm,
+        "warmer_started": warmer_started(),
         "schema": {"ready": _schema_ready, "error": _schema_error},
     }
 
