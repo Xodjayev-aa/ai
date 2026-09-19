@@ -166,6 +166,62 @@ async function run() {
           Boolean(error.browserTts), String(error.detail || error.message).slice(0, 90));
   }
 
+  // ── HD voice chain: hd → legacy → {browser_tts} ─────────────────
+  const hdInfo = voices.hd || {};
+  check("HD catalogue is advertised", hdInfo.enabled === true && (hdInfo.voices || []).length > 0,
+        `${(hdInfo.voices || []).length} HD voices`);
+  check("HD catalogue leads with uz, en, ru, tr",
+        ["uz", "en", "ru", "tr"].every((code, i) => hdInfo.languages?.[i]?.code === code),
+        (hdInfo.languages || []).slice(0, 4).map((l) => l.code).join(","));
+  const ttsFetch = async (body) => window.fetch("/api/voice/tts", {
+    method: "POST",
+    headers: { "content-type": "application/json",
+               authorization: `Bearer ${window.Aether.session.token}` },
+    body: JSON.stringify(body),
+  });
+  const hdResp = await ttsFetch({ text: "Salom, sinov.", voice: "uz-UZ-SardorNeural",
+                                  speed: 1.0, provider: "auto" });
+  const hdHeader = hdResp.headers.get("x-aether-tts") || "";
+  if (hdResp.status === 200) {
+    const size = (await hdResp.arrayBuffer()).byteLength;
+    check("HD voice answers through the chain", ["hd", "legacy"].includes(hdHeader) && size > 500,
+          `${hdHeader} · ${size} bytes`);
+    check("X-Aether-TTS names the engine that answered", Boolean(hdHeader), hdHeader);
+  } else {
+    // No internet in the sandbox: the chain must end in the documented 503.
+    const payload = await hdResp.json();
+    check("HD failure falls through to {browser_tts}",
+          hdResp.status === 503 && payload?.detail?.browser_tts === true,
+          `${hdResp.status} ${JSON.stringify(payload?.detail?.message)}`);
+  }
+  const browserOnly = await ttsFetch({ text: "Browser voices.", voice: "nova",
+                                       provider: "browser" });
+  const browserPayload = browserOnly.json ? await browserOnly.json() : {};
+  check("provider=browser skips the servers",
+        browserOnly.status === 503 && browserPayload?.detail?.browser_tts === true,
+        `${browserOnly.status}`);
+
+  // ── new settings flags round-trip against the live server ──────
+  const livePrefs = await window.Aether.api("/api/settings/prefs");
+  check("live server exposes the voice prefs",
+        livePrefs.voice_hd === true && livePrefs.voice_language === "auto"
+        && livePrefs.exam?.enabled === false,
+        JSON.stringify(livePrefs).slice(0, 120));
+  const storedPrefs = await window.Aether.api("/api/settings/prefs", {
+    method: "PUT",
+    body: { voice_language: "uz", voice_name: "uz-UZ-SardorNeural",
+            allow_strong_language: true, exam: { enabled: true, preset: "ielts", topic: "" } },
+  });
+  check("live prefs persist what was sent",
+        storedPrefs.voice_language === "uz" && storedPrefs.voice_name === "uz-UZ-SardorNeural"
+        && storedPrefs.allow_strong_language === true && storedPrefs.exam.enabled === true,
+        JSON.stringify(storedPrefs.exam));
+  await window.Aether.api("/api/settings/prefs", {
+    method: "PUT",
+    body: { voice_language: "auto", voice_name: "", allow_strong_language: false,
+            exam: { enabled: false, preset: "ielts", topic: "" } },
+  });
+
   // ── images pane: real request, graceful failure ─────────────────
   $("#nav-images").click();
   $("#image-prompt").value = "a small blue hexagon on dark charcoal";

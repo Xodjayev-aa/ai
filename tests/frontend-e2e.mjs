@@ -235,6 +235,132 @@ async function run() {
   await wait(200);
   check("ending the call closes the view", $("#call-view").classList.contains("hidden"));
 
+  /* ── voice v2: HD catalogue, prefs, prompt clauses, exam mode ──── */
+  const hd = voices.hd || {};
+  check("voices payload advertises the HD catalogue",
+        hd.enabled === true && (hd.voices || []).length >= 5,
+        `${(hd.voices || []).length} HD voices`);
+  check("HD languages are popular-first (uz, en, ru, tr)",
+        ["uz", "en", "ru", "tr"].every((code, index) => hd.languages?.[index]?.code === code),
+        (hd.languages || []).slice(0, 4).map((l) => l.code).join(","));
+  check("HD default voice is the multilingual one",
+        hd.default_voice === "en-US-AndrewMultilingualNeural", hd.default_voice);
+
+  const ttsHeaders = { "content-type": "application/json",
+                       authorization: `Bearer ${window.Aether.session.token}` };
+  const hdSpeak = await window.fetch("/api/voice/tts", {
+    method: "POST", headers: ttsHeaders,
+    body: JSON.stringify({ text: "Salom, bu HD ovoz.", voice: "uz-UZ-SardorNeural",
+                           speed: 1.1, provider: "auto" }),
+  });
+  const hdBytes = (await hdSpeak.arrayBuffer()).byteLength;
+  check("HD voice answers with audio and says so",
+        hdSpeak.status === 200 && hdSpeak.headers.get("x-aether-tts") === "hd" && hdBytes > 512,
+        `${hdSpeak.status} · ${hdSpeak.headers.get("x-aether-tts")} · ${hdBytes}B`);
+  const legacySpeak = await window.fetch("/api/voice/tts", {
+    method: "POST", headers: ttsHeaders,
+    body: JSON.stringify({ text: "Backup voice.", voice: "nova", provider: "auto" }),
+  });
+  check("legacy voice still answers as the backup link",
+        legacySpeak.status === 200 && legacySpeak.headers.get("x-aether-tts") === "legacy",
+        legacySpeak.headers.get("x-aether-tts"));
+  const browserSpeak = await window.fetch("/api/voice/tts", {
+    method: "POST", headers: ttsHeaders,
+    body: JSON.stringify({ text: "Browser only.", voice: "nova", provider: "browser" }),
+  });
+  const browserBody = await browserSpeak.json();
+  check("browser-only requests come back as {browser_tts}",
+        browserSpeak.status === 503 && browserBody?.detail?.browser_tts === true,
+        `${browserSpeak.status} ${JSON.stringify(browserBody?.detail?.message)}`);
+
+  /* ── new settings flags round-trip + prompt clauses ────────────── */
+  const prefsDefaults = await window.Aether.api("/api/settings/prefs");
+  check("new voice prefs exist with sane defaults",
+        prefsDefaults.voice_hd === true && prefsDefaults.voice_language === "auto"
+        && prefsDefaults.voice_name === "" && prefsDefaults.allow_strong_language === false
+        && prefsDefaults.exam?.enabled === false,
+        JSON.stringify(prefsDefaults));
+  await window.Aether.api("/api/settings/prefs", { method: "PUT", body: {
+    voice_hd: true, voice_language: "uz", voice_name: "uz-UZ-SardorNeural",
+    allow_strong_language: true, exam: { enabled: true, preset: "cefr_b2", topic: "space" },
+  } });
+  const prefsReread = await window.Aether.api("/api/settings/prefs");
+  check("voice prefs round-trip and persist",
+        prefsReread.voice_name === "uz-UZ-SardorNeural" && prefsReread.voice_language === "uz"
+        && prefsReread.allow_strong_language === true && prefsReread.exam.preset === "cefr_b2"
+        && prefsReread.exam.topic === "space",
+        JSON.stringify(prefsReread.exam));
+
+  const capturedPrompt = async () =>
+    (await (await realFetch(`${BASE}/__mock/last_prompt`)).json()).system || "";
+
+  const sendMessage = async (text) => {
+    $("#chat-input").value = text;
+    $("#chat-input").dispatchEvent(new window.Event("input"));
+    $("#send-btn").click();
+    await until(() => !$("#stop-btn").classList.contains("hidden"), 6000);
+    await until(() => $("#stop-btn").classList.contains("hidden"), 30000);
+    await wait(350);
+  };
+
+  await sendMessage("clause check with mature language on");
+  const promptOn = await capturedPrompt();
+  check("mature-language clause reaches the model when the toggle is on",
+        promptOn.includes("realistic profanity") && !promptOn.includes("no profanity"),
+        promptOn.includes("realistic profanity") ? "clause present" : "missing");
+  check("language clause follows the preference (Uzbek)",
+        promptOn.includes("Reply in Uzbek."));
+
+  await window.Aether.api("/api/settings/prefs",
+                          { method: "PUT", body: { allow_strong_language: false,
+                                                   voice_language: "auto" } });
+  await sendMessage("clause check with family-friendly language");
+  const promptOff = await capturedPrompt();
+  check("family-friendly clause comes back when the toggle is off",
+        promptOff.includes("no profanity") && !promptOff.includes("realistic profanity"),
+        promptOff.includes("no profanity") ? "clause present" : "missing");
+  check("auto language clause is used again",
+        promptOff.includes("Reply in the user's language."));
+
+  /* ── exam mode in the call: HUD, longer pause, Done/Finish ────── */
+  window.Aether.startCall();
+  await until(() => !$("#call-view").classList.contains("hidden"), 5000);
+  $("#call-mode-exam").click();
+  await wait(80);
+  check("exam HUD is visible in the call",
+        !$("#call-hud").classList.contains("hidden")
+        && /Speaking exam/.test($("#call-hud").textContent), $("#call-hud").textContent);
+  const examRec = window.__rec;
+  const usersBeforeExam = $$(".msg.user").length;
+  const examStart = Date.now();
+  examRec.onresult({ resultIndex: 0,
+    results: [Object.assign([{ transcript: "Cities should invest in parks" }], { isFinal: true })] });
+  await until(() => $$(".msg.user").length > usersBeforeExam, 9000);
+  const examDelay = Date.now() - examStart;
+  check("exam answers wait for the longer 2.4 s pause", examDelay >= 2000, `${examDelay} ms`);
+  await until(() => /question \d/.test($("#call-hud").textContent), 20000);
+  check("exam HUD counts the question",
+        /question \d/.test($("#call-hud").textContent), $("#call-hud").textContent);
+  check("Done and Finish controls live in the call",
+        Boolean($("#call-done")) && Boolean($("#call-finish"))
+        && !$("#call-done").classList.contains("hidden"));
+  const usersBeforeDone = $$(".msg.user").length;
+  examRec.onresult({ resultIndex: 0,
+    results: [Object.assign([{ transcript: "Safety and lighting matter most" }], { isFinal: true })] });
+  const doneStart = Date.now();
+  $("#call-done").click();
+  await until(() => $$(".msg.user").length > usersBeforeDone, 9000);
+  check("Done sends immediately instead of waiting", Date.now() - doneStart < 1500,
+        `${Date.now() - doneStart} ms`);
+  const usersBeforeFinish = $$(".msg.user").length;
+  $("#call-finish").click();
+  const finishSent = await until(() => $$(".msg.user").length > usersBeforeFinish, 9000);
+  const finishText = $$(".msg.user .content").slice(-1)[0]?.textContent || "";
+  check("Finish asks for the feedback card",
+        finishSent && /finished|feedback/i.test(finishText), finishText.slice(0, 60));
+  $("#call-end").click();
+  await wait(200);
+
   /* ── images ───────────────────────────────────────────────────── */
   $("#nav-images").click();
   $("#image-prompt").value = "a geometric hexagon done in soft indigo";

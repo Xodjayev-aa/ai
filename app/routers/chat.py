@@ -29,8 +29,8 @@ from app.ai import client, keyless, pipeline
 from app.ai import config as ai_config
 from app.database import (
     add_memory, add_message, bump_usage, get_auto_memory, get_conversation,
-    get_custom_instructions, get_doc, get_persona, get_usage, list_memories,
-    list_messages, upsert_message,
+    get_custom_instructions, get_doc, get_persona, get_prefs, get_usage,
+    list_memories, list_messages, upsert_message,
 )
 from app.deps import get_current_user
 

@@ -105,8 +105,8 @@ class TTSBody(BaseModel):
     # Either a short id ("nova") or an Edge ShortName ("uz-UZ-SardorNeural").
     voice: str = Field(default=keyless.DEFAULT_VOICE, max_length=64)
     speed: float = Field(default=1.0, ge=0.5, le=2.0)
-    # auto = HD → legacy → browser; hd = HD only, then fall through the chain;
-    # browser = skip the servers entirely (Settings → "browser voices only").
+    # auto = HD → legacy → browser; hd = prefer HD, then fall through the chain;
+    # browser = skip the servers entirely (Settings → HD voices off).
     provider: str = Field(default="auto", pattern="^(auto|hd|browser)$")
 
 
@@ -180,6 +180,14 @@ async def text_to_speech(body: TTSBody, user=Depends(get_current_user)):
 
     last_error = ""
     retry_after = None
+
+    # (0) Explicit browser-only request (Settings → HD off). The client asked for
+    #     its own voices, so answer 503 {browser_tts} without touching a server.
+    if body.provider == "browser":
+        return JSONResponse(status_code=503, headers={"Retry-After": "2"}, content={
+            "detail": {"message": "Browser voices requested.",
+                       "browser_tts": True, "retry_after": 0},
+        })
 
     # (a) HD Edge neural voices — ~140 languages, best quality, keyless. Routed
     #     through the shared TTS pacer so a burst of sentences stays polite.

@@ -1,11 +1,15 @@
 """Run the real Aether API with stubbed free-tier providers.
 
 CI and the build sandbox have no internet, so the keyless Pollinations calls
-can never succeed there. This entry point imports the *production* app and
-replaces only the three provider functions (chat stream, completion, TTS) with
-deterministic stubs, which lets the browser-level E2E test exercise every
-happy path — streaming, stop/partial, regenerate, incremental decks, exports,
-voice — over real HTTP, real auth and a real database.
+(and the keyless Edge HD voices) can never succeed there. This entry point
+imports the *production* app and replaces only the provider functions (chat
+stream, completion, TTS, HD TTS) with deterministic stubs, which lets the
+browser-level E2E test exercise every happy path — streaming, stop/partial,
+regenerate, incremental decks, exports, voice, exam mode — over real HTTP,
+real auth and a real database.
+
+It also exposes ``GET /__mock/last_prompt`` (test-only) so the E2E can assert
+what the server actually put in the system prompt.
 
     AETHER_MOCK_PORT=8001 .venv/bin/python tests/mock_server.py
 """
@@ -30,6 +34,9 @@ WORDS_PER_CHUNK = 3
 DELAY = float(os.getenv("AETHER_MOCK_DELAY", "0.05"))
 
 
+CAPTURED: dict[str, str] = {}          # last system prompt the model received
+
+
 def _answer_for(messages: list[dict]) -> str:
     """Deterministic, topic-aware-looking text — enough to assert on."""
     last = ""
@@ -39,6 +46,8 @@ def _answer_for(messages: list[dict]) -> str:
             break
     system = " ".join(str(m.get("content") or "") for m in messages
                       if m.get("role") == "system")
+    if "you are aether" in system.lower():
+        CAPTURED["system"] = system          # ignore memory/aux prompts
     lowered = system.lower()
     if "design the structure" in lowered or "slide titles" in lowered:
         # The plan prompt asks for exactly N titles — honour it so the UI's
@@ -94,7 +103,47 @@ keyless.stream_text = stream_text
 keyless.complete_text = complete_text
 keyless.tts_audio = tts_audio
 
+# HD (Edge) voices: no network in CI. Stub the websocket call and pre-seed the
+# catalogue cache so even the language list is instant (the real code path is
+# used everywhere else — including the POPULAR fallback shape).
+import app.ai.tts_hd as tts_hd  # noqa: E402
+
+
+async def hd_synthesize(self, text, *, voice=None, rate=None, pitch=None, volume=None):
+    await asyncio.sleep(0.02)
+    selected = voice or self.default_voice
+    payload = (f"hd;voice={selected};rate={rate};text={text[:60]}".encode() * 60)[:4000]
+    return b"ID3\x03\x00\x00\x00\x00\x00\x00" + payload + bytes(1024)
+
+
+tts_hd.HDTTS.synthesize = hd_synthesize
+
 from app.main import app  # noqa: E402  (import after patching)
+from app.routers.voice import hd_tts     # noqa: E402  (the app's singleton)
+
+# Seed the HD catalogue from the built-in POPULAR list (same shapes the live
+# VoicesManager produces) so the first /api/voice/voices call is instant.
+hd_tts._catalog = [
+    {"short": short, "name": name,
+     "locale": short.rsplit("-", 1)[0] if "-" in short else short,
+     "lang": short.split("-")[0].lower(),
+     "gender": "female" if "female" in name.lower() else "male"}
+    for short, name in tts_hd.POPULAR
+]
+hd_tts._catalog_at = time.monotonic()
+
+
+# The app mounts the built frontend at "/", which would swallow this path, so
+# the test-only route is inserted *before* every other route.
+from starlette.responses import JSONResponse  # noqa: E402
+from starlette.routing import Route  # noqa: E402
+
+
+async def _last_prompt(_request):
+    return JSONResponse({"system": CAPTURED.get("system", "")})
+
+
+app.router.routes.insert(0, Route("/__mock/last_prompt", _last_prompt))
 
 if __name__ == "__main__":
     import uvicorn
