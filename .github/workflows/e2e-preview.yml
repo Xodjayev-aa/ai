@@ -151,10 +151,30 @@ jobs:
               ("e2e app shell", r"app shell loads"),
               ("e2e favicon.svg", r"favicon\.svg served as image/svg\+xml"),
               ("e2e shell assets", r"every shell asset served"),
+              ("e2e register", r"\| register \+ token|register \|"),
               ("e2e turso health", r"Turso database"),
           ):
               print(f"::notice file=tests/e2e_preview.py::{label}: "
                     f"{line(pattern) or 'not reported'}")
+
+          target = "${{ steps.target.outputs.base_url }}" or "(local boot)"
+          print(f"::notice file=tests/e2e_preview.py::e2e target: {target}")
+
+          # Headline summary: green count, or the first failed check.
+          try:
+              with open("e2e-report.md", encoding="utf8") as fh:
+                  report = fh.read()
+          except OSError:
+              report = ""
+          headline = re.search(r"\*\*(\d+/\d+) checks passed\*\*", report)
+          bad = re.search(r"^\| [^|]+ \| ❌ \|.*$", report, re.M)
+          if bad:
+              print(f"::error file=tests/e2e_preview.py::"
+                    f"e2e summary: {headline.group(1) if headline else '?'} "
+                    f"checks passed — first failure: {bad.group(0).strip()}")
+          elif headline:
+              print(f"::notice file=tests/e2e_preview.py::"
+                    f"e2e summary: {headline.group(1)} checks passed, no failures")
           PY
 
       - name: Fail if the suite failed
