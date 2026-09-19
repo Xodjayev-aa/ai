@@ -336,16 +336,23 @@ async function run() {
 
   const faviconSvg = readFileSync(join(root, "frontend/icons/favicon.svg"), "utf8");
   check("favicon.svg is the rounded-A monogram",
-        faviconSvg.includes("M5.4 19.8 12 4.2l6.6 15.6") && faviconSvg.includes("M8.1 14.6h7.8")
-        && faviconSvg.includes('rx="5.4"'));
+        faviconSvg.includes("M5.2 19.4") && faviconSvg.includes("M8.1 14.8h7.8")
+        && faviconSvg.includes('stroke:#16181d') && faviconSvg.includes('stroke:#f5f6f7'));
+  check("favicon.svg is monochrome (no purple plate)",
+        !faviconSvg.includes("#9aa0f5") && !faviconSvg.includes("<rect") && !faviconSvg.includes('fill="#'));
+  check("favicon.svg adapts to browser theme",
+        faviconSvg.includes('@media (prefers-color-scheme:dark)') );
   check("the old hexagon mark is gone from the shell",
         !/20\.3 7\.3|7\.3Z/.test(html) && !/20\.3 7\.3/.test(MODULE_SOURCES));
   check("login, sidebar and header carry the monogram",
         (html.match(/stroke="currentColor"/g) || []).length >= 3,
         `${(html.match(/stroke="currentColor"/g) || []).length} inline marks`);
   check("the in-app logo icon is the monogram, not the sparkle",
-        MODULE_SOURCES.includes("M5.4 19.8 12 4.2l6.6 15.6")
+        MODULE_SOURCES.includes("M5.2 19.4") && MODULE_SOURCES.includes("M8.1 14.8h7.8")
         && !MODULE_SOURCES.includes("4.6 4.4 9 9"));
+  check("header logo uses currentColor (monochrome, no plate)",
+        (html.match(/stroke="currentColor"/g) || []).length >= 3 && !html.includes('#9aa0f5')
+        && html.includes('stroke-width="2.4"'));
   check("manifest references the shipped icons",
         (MANIFEST.icons || []).every((icon) => fileExists(icon.src)));
 
@@ -363,9 +370,16 @@ async function run() {
   check("the only capacity copy left is About + the cooldown",
         (UI_TEXT.match(/short waits/gi) || []).length <= 2,
         `${(UI_TEXT.match(/short waits/gi) || []).length} mentions`);
+  const authSrc = readFileSync(join(root, "app/routers/auth.py"), "utf8");
+  check("server error copy for unknown email present",
+        authSrc.includes("No account with this email yet — create one below"));
+  check("server error copy for existing account present",
+        authSrc.includes("Account exists — sign in instead"));
+  check("server error copy for wrong password present",
+        authSrc.includes("Wrong password"));
 
-  check("service worker cache bumped to aether-v12",
-        SW_SOURCE.includes('const CACHE = "aether-v12"'));
+  check("service worker cache bumped to aether-v13",
+        SW_SOURCE.includes('const CACHE = "aether-v13"'));
   const precached = precachedPaths();
   const shipped = shellRefs();
   // "/" is the navigation entry point, served by index.html — not a file.
@@ -376,7 +390,7 @@ async function run() {
         `listed but missing: ${deadEntries.join(", ") || "none"} · `
         + `shipped but not listed: ${notPrecached.join(", ") || "none"}`);
   check("the old cache name is not referenced anywhere",
-        !SW_SOURCE.includes("aether-v11"));
+        !SW_SOURCE.includes("aether-v12"));
 
   // send a message and stream an answer
   $("#chat-input").value = "Say hello";
@@ -680,11 +694,12 @@ async function run() {
   state.authMeFail = null;
   window.Aether.emit("session:expired", { status: 401, detail: "User not found" });
   await wait(60);
+  // After fix, recovery prefills but does NOT flip tab — it leaves login active per spec
+  // Also toast is at most once and auto-dismiss ~6s, but in this sync test it is visible immediately
   check("storage reset says so and prefills the email",
         !$("#auth-view").classList.contains("hidden")
         && /Storage was reset/.test($("#toasts").textContent)
-        && $("#auth-email").value === "claim@example.com"
-        && $("#tab-register").classList.contains("active"),
+        && $("#auth-email").value === "claim@example.com",
         `${$("#auth-email").value} · ${$("#auth-error").textContent}`);
 
   // A real 401 with healthy storage is the only case that says "expired".
@@ -695,6 +710,7 @@ async function run() {
   check("a confirmed 401 with healthy storage is an expiry", outcome.state === "expired", outcome.state);
   window.Aether.emit("session:expired", { status: 401, detail: "Invalid or expired token" });
   await wait(60);
+  check("storage-reset toast is not duplicated while auth is open", ($("#toasts").textContent.match(/Storage was reset/g) || []).length === 1, ($("#toasts").textContent.match(/Storage was reset/g) || []).length + " toasts");
   check("session expiry only claims the session expired",
         /Session expired — please sign in again/.test($("#toasts").textContent)
         && !window.localStorage.getItem("aether_token"));

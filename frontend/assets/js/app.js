@@ -41,17 +41,29 @@
     $("#auth-view").classList.remove("hidden");
   }
 
+  let storageResetShown = false;
+
   function showStorageReset() {
+    if (storageResetShown) return;
+    // Never while the auth screen is already open — the user is already doing
+    // the fix, and login/register failures have their own inline cards.
+    const authView = document.getElementById("auth-view");
+    if (authView && !authView.classList.contains("hidden")) {
+      const preEmail = A.emailFromToken(A.session.token) || A.session.email || "";
+      if (preEmail && !$("#auth-email").value) $("#auth-email").value = preEmail;
+      return;
+    }
+    storageResetShown = true;
     const email = A.emailFromToken(A.session.token) || A.session.email || "";
     // The account no longer exists, so the token is meaningless — but keep the
-    // email around: it is the one thing worth prefilling.
+    // email around: it is the one thing worth prefilling. Do NOT flip the tab:
+    // prefill may fill the input but must not mutate the visible tab or submit target.
     A.session.token = "";
     showAuthView();
-    switchAuthTab("register");
     if (email) $("#auth-email").value = email;
     $("#auth-password").focus();
     A.toast("Storage was reset — please create your account again",
-            { type: "warn", timeout: 12000 });
+            { type: "warn", timeout: 6000 });
   }
 
   function showSessionExpired() {
@@ -79,6 +91,14 @@
     } catch { return true; /* the 401 already came through — trust it */ }
   }
 
+  function saveAuth(data) {
+    const token = data.access_token || data.token || data.accessToken || "";
+    if (!token) throw new Error("Invalid server response: missing token");
+    A.session.token = token;
+    const emailVal = $("#auth-email").value.trim().toLowerCase();
+    if (emailVal) A.session.email = emailVal;
+  }
+
   function initAuth() {
     $("#tab-login").onclick = () => switchAuthTab("login");
     $("#tab-register").onclick = () => switchAuthTab("register");
@@ -95,14 +115,13 @@
           method: "POST",
           body: { email: $("#auth-email").value.trim(), password: $("#auth-password").value },
         });
-        A.session.token = data.access_token;
-        A.session.email = $("#auth-email").value.trim().toLowerCase();
+        saveAuth(data);
         $("#auth-email").value = "";
         $("#auth-password").value = "";
         A.session.restoreHash();          // open conversation comes back
         await enterApp();
       } catch (err) {
-        error.textContent = err.message;
+        error.textContent = err.detail || err.message;
         error.classList.remove("hidden");
       } finally {
         button.disabled = false;
@@ -111,7 +130,12 @@
     };
     $("#retry-btn").onclick = () => location.reload();
     A.on("session:expired", (err) => {
-      if (isMissingAccount(err)) { showStorageReset(); return; }
+      // storage-reset toast: at most once, never while auth screen is open, never for login/register
+      if (isMissingAccount(err) && !storageKnownUnhealthy() && (A.emailFromToken(A.session.token) || A.session.email)) {
+        const authOpen = !document.getElementById("auth-view")?.classList.contains("hidden");
+        if (!authOpen && !storageResetShown) { showStorageReset(); return; }
+        if (authOpen) return; // already handling the fix
+      }
       if (storageKnownUnhealthy()) {
         // Storage is coming back: keep the session and let the user retry
         // instead of pretending the session died.
@@ -404,7 +428,12 @@
       return { state: "ok" };
     } catch (err) {
       if (err.status === 401) {
-        if (isMissingAccount(err)) return { state: "reset", err };
+        const missing = isMissingAccount(err);
+        const hasEmail = Boolean(A.emailFromToken(A.session.token) || A.session.email);
+        if (missing && hasEmail) {
+          if (await dbHealthy()) return { state: "reset", err };
+          return { state: "warming", err };
+        }
         if (await dbHealthy()) return { state: "expired", err };
         return { state: "warming", err };
       }
