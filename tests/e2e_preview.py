@@ -195,38 +195,73 @@ def test_auth(c: httpx.Client, base: str) -> str | None:
     return token
 
 
-def test_chat(c: httpx.Client, base: str, conversation: str) -> str | None:
-    """Stream one short answer; returns the answer text."""
+def _stream_answer(c: httpx.Client, base: str, payload: dict,
+                   attempts: int = 3) -> tuple[bool, str, list[dict], str,
+                                                float | None, str]:
+    """POST /api/chat/stream and consume the SSE stream.
+
+    Honors the app's honest-cooldown contract: when the stream ends with a
+    *retryable* error before any token arrived (free tier cooling down),
+    wait the reported retry_after and try again. Returns
+    (http_ok, http_detail, events, answer, first_delta_at, stream_error).
+    """
+    http_ok, http_detail = False, ""
     events: list[dict] = []
     answer = ""
-    stream_error = ""
     first_delta_at: float | None = None
-    t0 = time.time()
+    stream_error = ""
+    for attempt in range(attempts):
+        events, answer, stream_error = [], "", ""
+        first_delta_at = None
+        retryable, retry_after = False, 0.0
+        t0 = time.time()
+        with c.stream("POST", f"{base}/api/chat/stream", json=payload,
+                      headers={"Accept": "text/event-stream"}) as resp:
+            if resp.status_code != 200:
+                body = resp.read().decode(errors="replace")[:200]
+                return False, f"{resp.status_code}: {body}", events, answer, None, ""
+            http_ok, http_detail = True, f"{resp.status_code}"
 
-    with c.stream("POST", f"{base}/api/chat/stream",
-                  json={"conversation_id": conversation,
+            def on_event(ev: dict) -> None:
+                nonlocal answer, first_delta_at, stream_error
+                nonlocal retryable, retry_after
+                events.append(ev)
+                if ev.get("type") == "delta":
+                    if first_delta_at is None:
+                        first_delta_at = time.time() - t0
+                    answer += ev.get("text", "")
+                elif ev.get("type") == "final":
+                    answer = ev.get("text") or answer
+                elif ev.get("type") == "error":
+                    stream_error = str(ev.get("detail"))[:200]
+                    retryable = bool(ev.get("retryable"))
+                    try:
+                        retry_after = float(ev.get("retry_after") or 0)
+                    except (TypeError, ValueError):
+                        retry_after = 0.0
+
+            read_sse(resp, on_event, deadline=time.time() + 150)
+        if "delta" in {e.get("type") for e in events} or answer.strip():
+            break
+        if retryable and attempt < attempts - 1:
+            # Honest cooldown from the app — wait it out, then retry.
+            time.sleep(min(max(retry_after, 5.0), 60.0))
+            continue
+        break
+    return http_ok, http_detail, events, answer, first_delta_at, stream_error
+
+
+def test_chat(c: httpx.Client, base: str, conversation: str) -> str | None:
+    """Stream one short answer; returns the answer text."""
+    http_ok, http_detail, events, answer, first_delta_at, stream_error = \
+        _stream_answer(c, base,
+                       {"conversation_id": conversation,
                         "message": "In one short sentence: what is 2+2?",
-                        "mode": "ai"},
-                  headers={"Accept": "text/event-stream"}) as resp:
-        if resp.status_code != 200:
-            body = resp.read().decode(errors="replace")[:200]
-            R.add("chat stream HTTP", False, f"{resp.status_code}: {body}")
-            return None
-        R.add("chat stream HTTP", True, f"{resp.status_code}")
-
-        def on_event(ev: dict) -> None:
-            nonlocal answer, first_delta_at, stream_error
-            events.append(ev)
-            if ev.get("type") == "delta":
-                if first_delta_at is None:
-                    first_delta_at = time.time() - t0
-                answer += ev.get("text", "")
-            elif ev.get("type") == "final":
-                answer = ev.get("text") or answer
-            elif ev.get("type") == "error":
-                stream_error = str(ev.get("detail"))[:200]
-
-        read_sse(resp, on_event, deadline=time.time() + 150)
+                        "mode": "ai"})
+    if not http_ok:
+        R.add("chat stream HTTP", False, http_detail)
+        return None
+    R.add("chat stream HTTP", True, http_detail)
 
     types = [e.get("type") for e in events]
     R.add("chat phase + deltas", "delta" in types,
@@ -243,20 +278,12 @@ def test_chat_controls(c: httpx.Client, base: str, conversation: str) -> None:
     msgs_before = c.get(f"{base}/api/conversations/{conversation}").json().get("messages", [])
     n_before = len(msgs_before)
     # Regenerate must re-answer WITHOUT storing another user message.
-    answer = ""
-    with c.stream("POST", f"{base}/api/chat/stream",
-                  json={"conversation_id": conversation, "message": "",
-                        "regenerate": True, "mode": "ai"}) as resp:
-        if resp.status_code != 200:
-            R.add("regenerate accepted", False, f"{resp.status_code}: {resp.read().decode()[:160]}")
-            return
-        def on_event(ev):
-            nonlocal answer
-            if ev.get("type") in ("delta", "final"):
-                answer += ev.get("text", "") if ev.get("type") == "delta" else ""
-            if ev.get("type") == "final":
-                answer = ev.get("text") or answer
-        read_sse(resp, on_event, deadline=time.time() + 150)
+    http_ok, http_detail, _events, answer, _ttft, _err = _stream_answer(
+        c, base, {"conversation_id": conversation, "message": "",
+                  "regenerate": True, "mode": "ai"})
+    if not http_ok:
+        R.add("regenerate accepted", False, http_detail[:160])
+        return
     msgs_after = c.get(f"{base}/api/conversations/{conversation}").json().get("messages", [])
     user_msgs_before = sum(1 for m in msgs_before if m["role"] == "user")
     user_msgs_after = sum(1 for m in msgs_after if m["role"] == "user")
